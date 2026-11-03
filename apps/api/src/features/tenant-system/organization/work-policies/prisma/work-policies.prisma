@@ -1,0 +1,24 @@
+// Chính sách giờ làm mặc định, múi giờ và ngày nghỉ của doanh nghiệp.
+// Khi có lịch phân ca, dùng giờ và định mức đã chụp trên lịch thay cho ngưỡng mặc định này.
+// Backend cần kiểm tra timeZone IANA, giờ HH:mm và holidayDates theo YYYY-MM-DD.
+
+model WorkScheduleConfig {
+  id                  String   @id @default(cuid())
+  tenantId            String   @unique @map("tenant_id") @db.VarChar(100)
+  timeZone            String   @map("time_zone")
+  lateThresholdTime   String   @default("07:55") @map("late_threshold_time")
+  earlyCheckoutTime   String   @default("17:30") @map("early_checkout_time")
+  holidayDates        String[] @default([]) @map("holiday_dates")
+  // ISO weekday: 1 = thứ Hai, 7 = Chủ nhật; backend kiểm tra 1..7, không trùng.
+  weeklyDaysOff       Int[]    @default([6, 7]) @map("weekly_days_off")
+  // Chính sách mạng doanh nghiệp; dữ liệu mạng thực tế ở daily-checkin.
+  // Danh sách rỗng = chưa cấu hình xác minh, không tự coi là VERIFIED.
+  officeAllowedIps    String[] @default([]) @map("office_allowed_ips")
+  officeAllowedBssids String[] @default([]) @map("office_allowed_bssids")
+  vpnAllowedIps       String[] @default([]) @map("vpn_allowed_ips")
+  version             Int      @default(1)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("schedule_configs")
+  @@schema("tenant_work_policies")
+}

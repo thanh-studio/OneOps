@@ -1,0 +1,66 @@
+// Chốt công theo nhân viên/ngày làm việc, bao gồm ngày chưa có bản ghi điểm danh.
+// evidenceSnapshot giữ căn cứ điểm danh/đơn đã duyệt tại thời điểm chốt.
+// attendanceId và các ID nhân viên/người duyệt là tham chiếu logic, không có khóa ngoại liên feature.
+
+model AttendanceReview {
+  id               String                 @id @default(cuid())
+  tenantId         String                 @map("tenant_id") @db.VarChar(100)
+  attendanceId     String?                @map("attendance_id")
+  // Tham chiếu logic cùng tenant, dùng cả khi chưa có điểm danh.
+  shiftScheduleId  String?                @map("shift_schedule_id") @db.Uuid
+  userId           String                 @map("user_id")
+  workDate         DateTime               @map("work_date") @db.Date
+  timeZone         String                 @map("time_zone")
+  evidenceSnapshot Json?                  @map("evidence_snapshot")
+  logs             AttendanceReviewLog[]
+  approverId       String                 @map("approver_id")
+  status           AttendanceReviewStatus @default(PENDING)
+  // Số công tạm tính hiển thị khi chờ duyệt; không phải công đã chốt.
+  estimatedUnits   Decimal?               @map("estimated_units") @db.Decimal(6, 2)
+  // Null = chưa chốt công; không tự cộng +1 vì đã check-in.
+  creditedUnits    Decimal?               @map("credited_units") @db.Decimal(6, 2)
+  reviewedById     String?                @map("reviewed_by_id")
+  reviewedAt       DateTime?              @map("reviewed_at") @db.Timestamptz(3)
+  reviewNote       String?                @map("review_note")
+  // Căn cứ duyệt tại thời điểm chốt, không tạo cấu hình ca trong module này.
+  policySnapshot   Json?                  @map("policy_snapshot")
+  version          Int                    @default(1)
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, attendanceId])
+  @@unique([tenantId, userId, workDate])
+  @@index([tenantId, workDate, status])
+  @@index([tenantId, approverId, status, workDate])
+  @@index([tenantId, shiftScheduleId])
+  @@map("attendance_reviews")
+  @@schema("hr_attendance_reports")
+}
+
+model AttendanceReviewLog {
+  id             String                  @id @default(cuid())
+  tenantId       String                  @map("tenant_id") @db.VarChar(100)
+  reviewId       String                  @map("review_id")
+  actorId        String                  @map("actor_id")
+  fromStatus     AttendanceReviewStatus? @map("from_status")
+  toStatus       AttendanceReviewStatus  @map("to_status")
+  beforeSnapshot Json?                   @map("before_snapshot")
+  afterSnapshot  Json?                   @map("after_snapshot")
+  note           String?
+  createdAt      DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  review         AttendanceReview        @relation(fields: [tenantId, reviewId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId, reviewId, createdAt])
+  @@map("attendance_review_logs")
+  @@schema("hr_attendance_reports")
+}
+
+enum AttendanceReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+
+  @@schema("hr_attendance_reports")
+}

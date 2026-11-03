@@ -1,0 +1,68 @@
+// Đơn WFH/công tác thuộc leave-requests; không phải mẫu ca hoặc lịch phân ca.
+// Duyệt kế hoạch không tự tạo điểm danh hoặc ghi nhận công.
+// userId, approverId, reviewedById và taskId là tham chiếu logic tới feature khác.
+
+model WorkModeRequest {
+  id                String                 @id @default(cuid())
+  tenantId          String                 @map("tenant_id") @db.VarChar(100)
+  userId            String                 @map("user_id")
+  requestedDate     DateTime               @map("requested_date") @db.Date
+  timeZone          String                 @map("time_zone")
+  type              WorkModeRequestType
+  taskId            String                 @map("task_id")
+  taskTitleSnapshot String                 @map("task_title_snapshot")
+  reason            String
+  workLocation      String?                @map("work_location")
+  // Form mẫu gộp lý do/địa điểm/cam kết vào reason; không bắt nhập thêm trường riêng.
+  expectedOutput    String?                @map("expected_output")
+  approverId        String                 @map("approver_id")
+  status            WorkModeApprovalStatus @default(PENDING)
+  reviewedById      String?                @map("reviewed_by_id")
+  reviewedAt        DateTime?              @map("reviewed_at") @db.Timestamptz(3)
+  reviewNote        String?                @map("review_note")
+  version           Int                    @default(1)
+  submittedAt       DateTime               @default(now()) @map("submitted_at") @db.Timestamptz(3)
+  updatedAt         DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  logs              WorkModeRequestLog[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, userId, requestedDate])
+  @@index([tenantId, approverId, status, requestedDate])
+  @@index([tenantId, taskId])
+  @@map("work_mode_requests")
+  @@schema("hr_leave_requests")
+}
+
+model WorkModeRequestLog {
+  id         String                  @id @default(cuid())
+  tenantId   String                  @map("tenant_id") @db.VarChar(100)
+  requestId  String                  @map("request_id")
+  actorId    String                  @map("actor_id")
+  fromStatus WorkModeApprovalStatus? @map("from_status")
+  toStatus   WorkModeApprovalStatus  @map("to_status")
+  note       String?
+  createdAt  DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  request    WorkModeRequest         @relation(fields: [tenantId, requestId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId, requestId, createdAt])
+  @@map("work_mode_request_logs")
+  @@schema("hr_leave_requests")
+}
+
+enum WorkModeRequestType {
+  REMOTE
+  ON_DUTY
+
+  @@schema("hr_leave_requests")
+}
+
+enum WorkModeApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+
+  @@schema("hr_leave_requests")
+}

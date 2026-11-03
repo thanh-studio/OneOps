@@ -1,0 +1,112 @@
+/// Giá trị khớp CalendarEventStatus của giao diện.
+/// completed chỉ là trạng thái lịch, không xác nhận điểm danh hoặc ghi nhận công.
+enum HrShiftScheduleStatus {
+  todo
+  in_progress
+  completed
+  cancelled
+
+  @@schema("hr_shifts_schedules")
+}
+
+enum HrShiftSchedulePriority {
+  low
+  medium
+  high
+
+  @@schema("hr_shifts_schedules")
+}
+
+/// Hình thức dự kiến trên lịch; không thay thế hình thức điểm danh thực tế.
+enum HrShiftWorkMode {
+  AT_OFFICE
+  REMOTE
+  ON_DUTY
+
+  @@schema("hr_shifts_schedules")
+}
+
+/// Mẫu ca tái sử dụng; lịch cụ thể sao chép giờ và định mức từ mẫu khi tạo.
+/// Backend kiểm tra endDayOffset là 0 hoặc 1, tổng thời lượng ca > 0;
+/// các định mức phút không âm và breakMinutes nhỏ hơn thời lượng ca.
+/// codeKey là code đã trim/chuẩn hóa hoa; tenantId lấy từ ngữ cảnh xác thực.
+model HrShift {
+  id                     String            @id @default(uuid()) @db.Uuid
+  tenantId               String            @db.VarChar(100)
+  code                   String            @db.VarChar(100)
+  codeKey                String            @db.VarChar(100)
+  title                  String            @db.VarChar(500)
+  description            String            @default("") @db.VarChar(2000)
+  startTime              DateTime          @db.Time(0)
+  endTime                DateTime          @db.Time(0)
+  /// 1: kết thúc vào ngày kế tiếp, hỗ trợ ca qua đêm.
+  endDayOffset           Int               @default(0)
+  breakMinutes           Int               @default(0)
+  lateGraceMinutes       Int               @default(0)
+  earlyLeaveGraceMinutes Int               @default(0)
+  /// Định mức công khi hoàn thành ca; backend kiểm tra > 0.
+  standardUnits          Decimal           @default(1) @db.Decimal(6, 2)
+  isActive               Boolean           @default(true)
+  version                Int               @default(1)
+  createdAt              DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime          @updatedAt @db.Timestamptz(3)
+  schedules              HrShiftSchedule[]
+
+  @@unique([tenantId, codeKey])
+  @@unique([tenantId, id])
+  @@index([tenantId, isActive])
+  @@map("shifts")
+  @@schema("hr_shifts_schedules")
+}
+
+/// Một lịch ca cụ thể, tối đa một người phụ trách như CalendarPayload.
+/// assigneeId là ID nhân viên do composition ánh xạ từ người dùng giao diện;
+/// tenantId lấy từ ngữ cảnh xác thực. Không tạo FK sang tài khoản/nhân viên.
+/// Ngày/giờ là giờ địa phương theo timeZone IANA từ cấu hình tenant.
+/// Backend kiểm tra allDay=true => hai giờ null, endDate >= startDate (ngày cuối bao gồm).
+/// Lịch allDay chưa xác định giờ ca, không tự suy ra thời lượng để tính công.
+/// allDay=false => đủ hai giờ, thời điểm kết thúc > bắt đầu, kể cả ca qua đêm.
+/// Lịch nhiều ngày là một khoảng liên tục, không phải quy tắc lặp mỗi ngày.
+/// Các định mức được chụp từ mẫu; sửa mẫu không thay đổi lịch đã phân công.
+/// Backend kiểm tra định mức không âm, giờ nghỉ < thời lượng ca có giờ, lịch trùng,
+/// và version khi cập nhật. Hủy/lưu trữ thay cho xóa lịch đã có điểm danh.
+model HrShiftSchedule {
+  id                     String                  @id @default(uuid()) @db.Uuid
+  tenantId               String                  @db.VarChar(100)
+  shiftId                String?                 @db.Uuid
+  title                  String                  @db.VarChar(500)
+  description            String                  @default("")
+  startDate              DateTime                @db.Date
+  endDate                DateTime                @db.Date
+  startTime              DateTime?               @db.Time(0)
+  endTime                DateTime?               @db.Time(0)
+  timeZone               String                  @db.VarChar(100)
+  allDay                 Boolean                 @default(false)
+  status                 HrShiftScheduleStatus   @default(todo)
+  priority               HrShiftSchedulePriority @default(medium)
+  assigneeId             String?                 @db.VarChar(100)
+  /// Null khi giao diện lịch chưa cung cấp hình thức làm việc.
+  workMode               HrShiftWorkMode?
+  workLocation           String?                 @db.VarChar(500)
+  breakMinutes           Int                     @default(0)
+  lateGraceMinutes       Int                     @default(0)
+  earlyLeaveGraceMinutes Int                     @default(0)
+  /// Chụp từ mẫu/chính sách; null = chưa xác định định mức, không tự cộng công.
+  /// Backend chỉ nhận giá trị > 0 cho ca có giờ; allDay phải để null.
+  standardUnits          Decimal?                @db.Decimal(6, 2)
+  /// Lưu trữ độc lập trạng thái hoàn thành/hủy; phục vụ bộ lọc archived của lịch.
+  archivedAt             DateTime?               @db.Timestamptz(3)
+  version                Int                     @default(1)
+  createdAt              DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime                @updatedAt @db.Timestamptz(3)
+  /// FK nội bộ bao gồm tenant để ngăn tham chiếu mẫu của tenant khác.
+  shift                  HrShift?                @relation(fields: [tenantId, shiftId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId, assigneeId, startDate])
+  @@index([tenantId, status, startDate])
+  @@index([tenantId, startDate, endDate])
+  @@index([tenantId, shiftId])
+  @@index([tenantId, archivedAt, startDate])
+  @@map("shift_schedules")
+  @@schema("hr_shifts_schedules")
+}
