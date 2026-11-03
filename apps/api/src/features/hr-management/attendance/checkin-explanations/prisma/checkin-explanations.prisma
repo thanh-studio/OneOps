@@ -1,0 +1,69 @@
+// Giải trình quên điểm danh, đi muộn hoặc về sớm; attendanceId có thể trống khi quên check-in.
+// Duyệt đơn không tự sửa giờ điểm danh hoặc chốt công.
+// attendanceId và các ID nhân viên/người duyệt là tham chiếu logic, không có khóa ngoại liên feature.
+model AttendanceExplanation {
+  id                   String                      @id @default(cuid())
+  tenantId             String                      @map("tenant_id") @db.VarChar(100)
+  userId               String                      @map("user_id")
+  attendanceId         String?                     @map("attendance_id")
+  workDate             DateTime                    @map("work_date") @db.Date
+  timeZone             String                      @map("time_zone")
+  type                 AttendanceExplanationType
+  reason               String
+  proposedCheckedInAt  DateTime?                   @map("proposed_checked_in_at") @db.Timestamptz(3)
+  proposedCheckedOutAt DateTime?                   @map("proposed_checked_out_at") @db.Timestamptz(3)
+  evidenceSnapshot     Json?                       @map("evidence_snapshot")
+  approverId           String                      @map("approver_id")
+  status               AttendanceExplanationStatus @default(PENDING)
+  reviewedById         String?                     @map("reviewed_by_id")
+  reviewedAt           DateTime?                   @map("reviewed_at") @db.Timestamptz(3)
+  reviewNote           String?                     @map("review_note")
+  version              Int                         @default(1)
+  submittedAt          DateTime                    @default(now()) @map("submitted_at") @db.Timestamptz(3)
+  updatedAt            DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  logs                 AttendanceExplanationLog[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, userId, workDate])
+  @@index([tenantId, attendanceId])
+  @@index([tenantId, approverId, status, workDate])
+  @@map("attendance_explanations")
+  @@schema("hr_checkin_explanations")
+}
+
+model AttendanceExplanationLog {
+  id             String                       @id @default(cuid())
+  tenantId       String                       @map("tenant_id") @db.VarChar(100)
+  explanationId  String                       @map("explanation_id")
+  actorId        String                       @map("actor_id")
+  fromStatus     AttendanceExplanationStatus? @map("from_status")
+  toStatus       AttendanceExplanationStatus  @map("to_status")
+  beforeSnapshot Json?                        @map("before_snapshot")
+  afterSnapshot  Json?                        @map("after_snapshot")
+  note           String?
+  createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  explanation    AttendanceExplanation        @relation(fields: [tenantId, explanationId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId, explanationId, createdAt])
+  @@map("attendance_explanation_logs")
+  @@schema("hr_checkin_explanations")
+}
+
+enum AttendanceExplanationType {
+  MISSING_CHECK_IN
+  MISSING_CHECK_OUT
+  LATE_CHECK_IN
+  EARLY_CHECK_OUT
+  OTHER
+
+  @@schema("hr_checkin_explanations")
+}
+
+enum AttendanceExplanationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+
+  @@schema("hr_checkin_explanations")
+}

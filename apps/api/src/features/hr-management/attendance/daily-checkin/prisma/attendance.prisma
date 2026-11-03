@@ -1,0 +1,136 @@
+// Điểm danh thực tế theo nhân viên/ngày và cấu hình tự đóng điểm danh.
+// Mỗi tenant/userId/workDate có một bản ghi; cập nhật hình thức không tạo lần check-in mới.
+// userId, shiftScheduleId, taskId và workModeRequestId là tham chiếu logic cùng tenant.
+// Không tạo khóa ngoại liên feature. Ngày chưa check-in được tổng hợp, không tạo giờ vào giả.
+
+model Attendance {
+  id                 String                        @id @default(cuid())
+  tenantId           String                        @map("tenant_id") @db.VarChar(100)
+  userId             String                        @map("user_id")
+  shiftScheduleId    String?                       @map("shift_schedule_id") @db.Uuid
+  // Giờ ca, định mức, ngày/giờ nghỉ tại lúc check-in, để sửa lịch không đổi căn cứ cũ.
+  scheduleSnapshot   Json?                         @map("schedule_snapshot")
+  workDate           DateTime                      @map("work_date") @db.Date
+  version            Int                           @default(1)
+  status             WorkStatus
+  checkedInAt        DateTime                      @map("checked_in_at") @db.Timestamptz(3)
+  checkedOutAt       DateTime?                     @map("checked_out_at") @db.Timestamptz(3)
+  checkInLabel       CheckInLabel?                 @map("check_in_label")
+  checkOutLabel      CheckOutLabel?                @map("check_out_label")
+  clientIp           String?                       @map("client_ip")
+  note               String?
+  workLocation       String?                       @map("work_location")
+  taskId             String?                       @map("task_id")
+  taskTitleSnapshot  String?                       @map("task_title_snapshot")
+  // Snapshot tại lúc điểm danh; không coi thông tin do trình duyệt gửi là đã xác thực.
+  timeZone           String                        @map("time_zone")
+  networkName        String?                       @map("network_name")
+  networkBssid       String?                       @map("network_bssid")
+  deviceDescription  String?                       @map("device_description")
+  verificationStatus AttendanceVerificationStatus  @default(UNVERIFIED) @map("verification_status")
+  verificationMethod AttendanceVerificationMethod? @map("verification_method")
+  verifiedAt         DateTime?                     @map("verified_at") @db.Timestamptz(3)
+  workModeRequestId  String?                       @map("work_mode_request_id")
+  createdAt          DateTime                      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime                      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  logs               AttendanceLog[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, userId, workDate])
+  @@index([tenantId, workDate, status])
+  @@index([tenantId, shiftScheduleId])
+  @@index([tenantId, workModeRequestId])
+  @@index([tenantId, taskId])
+  @@map("attendances")
+  @@schema("hr_daily_checkin")
+}
+
+model AttendanceLog {
+  id             String              @id @default(cuid())
+  tenantId       String              @map("tenant_id") @db.VarChar(100)
+  attendanceId   String              @map("attendance_id")
+  userId         String              @map("user_id")
+  action         AttendanceLogAction
+  fromStatus     WorkStatus?         @map("from_status")
+  toStatus       WorkStatus          @map("to_status")
+  note           String?
+  // actorId có thể khác userId khi người quản lý duyệt/sửa công.
+  actorId        String?             @map("actor_id")
+  beforeSnapshot Json?               @map("before_snapshot")
+  afterSnapshot  Json?               @map("after_snapshot")
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  attendance     Attendance          @relation(fields: [tenantId, attendanceId], references: [tenantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([tenantId, userId, createdAt])
+  @@index([tenantId, attendanceId, createdAt])
+  @@map("attendance_logs")
+  @@schema("hr_daily_checkin")
+}
+
+model AttendanceCheckinConfig {
+  id            String   @id @default(cuid())
+  tenantId      String   @unique @map("tenant_id") @db.VarChar(100)
+  autoCloseTime String   @default("23:59") @map("auto_close_time")
+  version       Int      @default(1)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("checkin_configs")
+  @@schema("hr_daily_checkin")
+}
+
+enum AttendanceLogAction {
+  CHECK_IN
+  CHECK_OUT
+  STATUS_CHANGED
+  AUTO_CLOSED
+  CORRECTED
+
+  @@schema("hr_daily_checkin")
+}
+
+enum AttendanceVerificationStatus {
+  UNVERIFIED
+  VERIFIED
+  FAILED
+
+  @@schema("hr_daily_checkin")
+}
+
+// Phương thức đã được backend xác minh; tên mạng/IP do client gửi chưa đủ chứng minh.
+enum AttendanceVerificationMethod {
+  OFFICE_IP
+  OFFICE_WIFI
+  CORPORATE_VPN
+  MANUAL
+
+  @@schema("hr_daily_checkin")
+}
+
+enum WorkStatus {
+  AT_OFFICE
+  REMOTE
+  ON_DUTY
+  ON_LEAVE
+  SICK_LEAVE
+  ABSENT
+  NOT_CHECKED_IN
+
+  @@schema("hr_daily_checkin")
+}
+
+enum CheckInLabel {
+  ON_TIME
+  LATE
+
+  @@schema("hr_daily_checkin")
+}
+
+enum CheckOutLabel {
+  NORMAL
+  EARLY
+  MISSING
+
+  @@schema("hr_daily_checkin")
+}
