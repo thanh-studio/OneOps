@@ -9,7 +9,7 @@ import {
   fields,
 } from "@/features/work-management/coordination/workspace-today/calendar/constants";
 import { client } from "@/features/work-management/coordination/workspace-today/calendar/api/client";
-import { recordsChanged } from "@/features/work-management/coordination/workspace-today/calendar/hooks/use-records";
+import { recordsChanged } from "@/features/work-management/coordination/workspace-today/calendar/hooks/use-record";
 import { useWorkspace } from "@/features/work-management/coordination/workspace-today/calendar/components/primitives/workspace";
 import { Button } from "@/features/work-management/coordination/workspace-today/calendar/components/primitives/button";
 import {

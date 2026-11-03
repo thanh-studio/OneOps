@@ -1,102 +1,173 @@
+
 "use client";
+
 import {
   createContext,
-  useContext,
-  useState,
   useCallback,
+  useContext,
   useEffect,
-  useRef,
+  useState,
+  type ReactNode,
 } from "react";
-import { Icon } from "@/features/work-management/coordination/workspace-today/calendar/components/primitives/icon";
-import {
-  Dialog,
-  DialogContent,
-} from "@/features/work-management/coordination/workspace-today/calendar/components/primitives/overlays";
-import { cn } from "@/features/work-management/coordination/workspace-today/calendar/components/primitives/utils";
 
-type Context = { openCreate: () => void; notify: (message: string) => void };
+/* =========================================================
+ * Workspace Context
+ * ======================================================= */
 
-const WorkspaceContext = createContext<Context | null>(null);
+interface WorkspaceContextValue {
+  open: boolean;
+  setOpen: (open: boolean) => void;
 
-export function useWorkspace() {
-  const context = useContext(WorkspaceContext);
-  if (!context) throw new Error("WorkspaceProvider required");
-  return context;
+  openCreate: () => void;
+  closeModal: () => void;
+
+  notify: (message: string) => void;
+}
+
+const WorkspaceContext =
+  createContext<WorkspaceContextValue | null>(null);
+
+interface WorkspaceProviderProps {
+  children: ReactNode;
+
+  renderCreate?: (close: () => void) => ReactNode;
+
+  onNotify?: (message: string) => void;
 }
 
 export function WorkspaceProvider({
   children,
   renderCreate,
   onNotify,
-}: {
-  children: React.ReactNode;
-  renderCreate: (close: () => void) => React.ReactNode;
-  onNotify?: (message: string) => void;
-}) {
-  const [creating, setCreating] = useState(false);
-  const [message, setMessage] = useState("");
+}: WorkspaceProviderProps) {
+  const [open, setOpen] = useState(false);
+
+  const openCreate = useCallback(() => {
+    setOpen(true);
+  }, []);
+
+  const closeModal = useCallback(() => {
+    setOpen(false);
+  }, []);
+
   const notify = useCallback(
-    (text: string) => {
-      if (onNotify) onNotify(text);
-      else setMessage(text);
+    (message: string) => {
+      if (onNotify) {
+        onNotify(message);
+      } else if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("workspace:notify", {
+            detail: { message },
+          }),
+        );
+      }
     },
     [onNotify],
   );
-  useEffect(() => {
-    if (!message) return;
-    const timer = setTimeout(() => setMessage(""), 5000);
-    return () => clearTimeout(timer);
-  }, [message]);
+
+  const value: WorkspaceContextValue = {
+    open,
+    setOpen,
+    openCreate,
+    closeModal,
+    notify,
+  };
+
   return (
-    <WorkspaceContext.Provider
-      value={{ openCreate: () => setCreating(true), notify }}
-    >
-      {children}
-      {creating && renderCreate(() => setCreating(false))}
-      {message && (
-        <div className="toast" role="status">
-          {message}
-          <button aria-label="Đóng thông báo" onClick={() => setMessage("")}>
-            <Icon name="close" size={16} />
-          </button>
-        </div>
+    <WorkspaceContext.Provider value={value}>
+      <div>{children}</div>
+
+      {open && renderCreate && (
+        <>
+          {renderCreate(closeModal)}
+        </>
       )}
     </WorkspaceContext.Provider>
   );
+}
+
+/* =========================================================
+ * useWorkspace
+ * ======================================================= */
+
+export function useWorkspace(): WorkspaceContextValue {
+  const context = useContext(WorkspaceContext);
+
+  if (!context) {
+    throw new Error(
+      "useWorkspace must be used within WorkspaceProvider",
+    );
+  }
+
+  return context;
+}
+
+/* =========================================================
+ * Modal
+ * ======================================================= */
+
+interface ModalProps {
+  title?: string;
+  children: ReactNode;
+  onClose: () => void;
 }
 
 export function Modal({
   title,
   children,
   onClose,
-  className,
-}: {
-  title: string;
-  children: React.ReactNode;
-  onClose: () => void;
-  className?: string;
-}) {
-  const trigger = useRef<HTMLElement | null>(null);
+}: ModalProps) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown,
+      );
+    };
+  }, [onClose]);
+
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
     >
-      <DialogContent
-        title={title}
-        className={cn("modal", className)}
-        onOpenAutoFocus={() => {
-          trigger.current = document.activeElement as HTMLElement;
-        }}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          trigger.current?.focus();
-        }}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? "workspace-modal-title" : undefined}
+        className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
       >
+        {title && (
+          <div className="mb-5 flex items-center justify-between gap-4">
+            <h2
+              id="workspace-modal-title"
+              className="text-lg font-semibold text-gray-900"
+            >
+              {title}
+            </h2>
+
+            <button
+              type="button"
+              aria-label="Đóng"
+              className="rounded-md px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+              onClick={onClose}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {children}
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }

@@ -1,37 +1,61 @@
-"use client";
-import type { HTMLAttributes } from "react";
-import { cva, type VariantProps } from "class-variance-authority";
-import { cn } from "@/features/work-management/coordination/workspace-today/calendar/components/primitives/utils";
 
-export const badgeVariants = cva(
-  "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium leading-5 whitespace-nowrap",
-  {
-    variants: {
-      variant: {
-        neutral: "border-border bg-muted text-muted-foreground",
-        brand: "border-primary/15 bg-accent text-accent-foreground",
-        success: "border-success/15 bg-success-soft text-success",
-        warning: "border-warning/15 bg-warning-soft text-warning",
-        danger: "border-destructive/15 bg-destructive-soft text-destructive",
-        info: "border-info/15 bg-info-soft text-info",
-      },
-    },
-    defaultVariants: { variant: "neutral" },
-  },
-);
+"use client";
+
+import type { HTMLAttributes } from "react";
+import { cn } from "./utils";
+
+export interface BadgeProps
+  extends HTMLAttributes<HTMLSpanElement> {
+  variant?:
+    | "default"
+    | "secondary"
+    | "success"
+    | "warning"
+    | "destructive"
+    | "outline";
+}
+
+const variants: Record<
+  NonNullable<BadgeProps["variant"]>,
+  string
+> = {
+  default:
+    "border-transparent bg-blue-600 text-white",
+
+  secondary:
+    "border-transparent bg-gray-100 text-gray-700",
+
+  success:
+    "border-transparent bg-green-100 text-green-700",
+
+  warning:
+    "border-transparent bg-yellow-100 text-yellow-800",
+
+  destructive:
+    "border-transparent bg-red-100 text-red-700",
+
+  outline:
+    "border border-gray-300 bg-transparent text-gray-700",
+};
 
 export function Badge({
   className,
-  variant,
-  dot,
+  variant = "default",
   children,
   ...props
-}: HTMLAttributes<HTMLSpanElement> &
-  VariantProps<typeof badgeVariants> & { dot?: boolean }) {
+}: BadgeProps) {
   return (
-    <span className={cn(badgeVariants({ variant }), className)} {...props}>
-      {dot && <span className="size-1.5 rounded-full bg-current" />}
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+        variants[variant],
+        className,
+      )}
+      {...props}
+    >
       {children}
     </span>
   );
 }
+
+export default Badge;

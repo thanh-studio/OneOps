@@ -1,9 +1,11 @@
-type Field = {
+
+export type Field = {
   key: string;
   label: string;
-  type: string;
+  type: "select" | "time" | "text" | "number" | "date" | "textarea";
   options?: readonly string[];
 };
+
 export const definition = {
   id: "work-management/calendar",
   icon: 5,
@@ -12,9 +14,17 @@ export const definition = {
   singular: "lịch làm việc",
   dateLabel: "Ngày diễn ra",
   personLabel: "Người tổ chức",
+
   tabs: [],
   sections: [],
-  statuses: ["Đã lên lịch", "Đang diễn ra", "Hoàn thành", "Đã hủy"],
+
+  statuses: [
+    "Đã lên lịch",
+    "Đang diễn ra",
+    "Hoàn thành",
+    "Đã hủy",
+  ],
+
   fields: [
     {
       key: "kind",
@@ -43,11 +53,13 @@ export const definition = {
       type: "text",
     },
   ],
+
   navigation: {
     title: "Lịch",
     collapsed: false,
     defaultSection: "Tất cả",
     allSection: "Tất cả",
+
     items: [
       {
         label: "Tất cả",
@@ -72,4 +84,5 @@ export const definition = {
     ],
   },
 } as const;
+
 export const fields: readonly Field[] = definition.fields;

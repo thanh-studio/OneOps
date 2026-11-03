@@ -7,7 +7,7 @@ import { client } from "@/features/work-management/coordination/workspace-today/
 import {
   useModuleRecords,
   recordsChanged,
-} from "@/features/work-management/coordination/workspace-today/calendar/hooks/use-records";
+} from "@/features/work-management/coordination/workspace-today/calendar/hooks/use-record";
 import {
   Modal,
   useWorkspace,
@@ -393,7 +393,7 @@ export function ModulePage() {
               Hủy
             </Button>
             <Button
-              variant="destructive"
+              variant="primary"
               disabled={pending}
               onClick={async () => {
                 if (pending) return;
