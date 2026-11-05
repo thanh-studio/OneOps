@@ -206,4 +206,60 @@ export class ShiftsRepository {
       throw error;
     }
   }
+
+  async remove(tenantId: string, id: string): Promise<void> {
+    try {
+      await this.db.$transaction(
+        async (tx) => {
+          const shift = await this.table(tx).findFirst({
+            where: { id, tenantId },
+            include: {
+              _count: {
+                select: { schedules: true },
+              },
+            },
+          });
+
+          if (!shift) {
+            throw new NotFoundException("Không tìm thấy ca làm việc.");
+          }
+
+          if (shift._count.schedules === 0) {
+            await this.table(tx).delete({
+              where: { id },
+            });
+          } else if (shift.isActive) {
+            await this.table(tx).update({
+              where: { id },
+              data: {
+                isActive: false,
+                version: { increment: 1 },
+              },
+            });
+          }
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
+      );
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2003"
+      ) {
+        throw new ConflictException(
+          "Không thể xóa ca làm việc do đã phát sinh lịch phân công.",
+        );
+      }
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034"
+      ) {
+        throw new ConflictException(
+          "Dữ liệu đang được thay đổi. Vui lòng tải lại và thử lại.",
+        );
+      }
+      throw error;
+    }
+  }
 }

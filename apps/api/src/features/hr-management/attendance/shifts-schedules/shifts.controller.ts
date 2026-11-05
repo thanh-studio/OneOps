@@ -3,10 +3,13 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
   ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
 } from "@nestjs/common";
 import { SchemaPipe } from "../../../../core/pipes/validation.pipe.js";
 import {
@@ -46,5 +49,13 @@ export class ShiftsController {
     @Body(new SchemaPipe(shiftUpdateSchema)) input: ShiftUpdateInput,
   ) {
     return this.service.update(id, input);
+  }
+
+  @Delete(":id")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(
+    @Param("id", new ParseUUIDPipe({ errorHttpStatusCode: 400 })) id: string,
+  ): Promise<void> {
+    await this.service.remove(id);
   }
 }

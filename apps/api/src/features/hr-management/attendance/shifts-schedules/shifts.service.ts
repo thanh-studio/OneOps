@@ -99,4 +99,9 @@ export class ShiftsService {
 
     return this.repository.update(tenantId, id, input);
   }
+
+  async remove(id: string): Promise<void> {
+    const tenantId = this.tenantContext.getTenantId();
+    await this.repository.remove(tenantId, id);
+  }
 }

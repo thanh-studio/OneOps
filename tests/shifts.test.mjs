@@ -18,8 +18,31 @@ const otherTenant = "other-tenant";
 async function cleanShifts() {
   const client = new Client({ connectionString: dbUrl });
   await client.connect();
+  await client.query('DELETE FROM "hr_shifts_schedules"."shift_schedules"');
   await client.query('DELETE FROM "hr_shifts_schedules"."shifts"');
   await client.end();
+}
+
+async function createSchedule(tenantId, shiftId, title = "Lịch phân ca test") {
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  const res = await client.query(`
+    INSERT INTO "hr_shifts_schedules"."shift_schedules" (
+      "id", "tenantId", "shiftId", "title", "description",
+      "startDate", "endDate", "startTime", "endTime", "timeZone",
+      "allDay", "status", "priority", "assigneeId", "workMode",
+      "workLocation", "breakMinutes", "lateGraceMinutes", "earlyLeaveGraceMinutes",
+      "standardUnits", "version", "createdAt", "updatedAt"
+    ) VALUES (
+      gen_random_uuid(), '${tenantId}', '${shiftId}', '${title}', '',
+      '2026-11-04', '2026-11-04', '1970-01-01 08:00:00', '1970-01-01 17:00:00', 'Asia/Ho_Chi_Minh',
+      false, 'todo', 'medium', 'user-01', 'AT_OFFICE',
+      '', 60, 15, 10,
+      1.00, 1, NOW(), NOW()
+    ) RETURNING id;
+  `);
+  await client.end();
+  return res.rows[0].id;
 }
 
 async function request(path, options = {}) {
@@ -527,4 +550,193 @@ test("SHIFT-03: Lấy chi tiết ca làm việc (GET /shifts/:id)", async () => 
   assert.equal(res.status, 200);
   assert.equal(res.body.id, created.body.id);
   assert.equal(res.body.code, "CHI-TIET");
+});
+
+// ==========================================
+// SHIFT-04: API Xóa / Vô hiệu hóa ca làm việc
+// ==========================================
+test("SHIFT-04: Xóa ca chưa có lịch phân công -> bản ghi bị xóa vật lý (204 No Content)", async () => {
+  const created = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "HARD-DEL",
+      title: "Ca chưa có lịch",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const shiftId = created.body.id;
+
+  // Thực hiện DELETE
+  const delRes = await request(`/shifts/${shiftId}`, { method: "DELETE" });
+  assert.equal(delRes.status, 204);
+
+  // Kiểm tra ca không còn tồn tại qua GET
+  const getRes = await request(`/shifts/${shiftId}`);
+  assert.equal(getRes.status, 404);
+
+  // Kiểm tra trực tiếp trong PostgreSQL
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  const dbRes = await client.query(
+    'SELECT * FROM "hr_shifts_schedules"."shifts" WHERE "id" = $1',
+    [shiftId],
+  );
+  await client.end();
+  assert.equal(dbRes.rows.length, 0);
+});
+
+test("SHIFT-04: Xóa ca đã có lịch phân công -> bản ghi vẫn tồn tại, chuyển isActive = false (soft delete)", async () => {
+  const created = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "SOFT-DEL",
+      title: "Ca đã có lịch",
+      startTime: "08:00",
+      endTime: "17:00",
+      isActive: true,
+    },
+  });
+  const shiftId = created.body.id;
+
+  // Phân lịch cho ca này
+  const scheduleId = await createSchedule(
+    testTenant,
+    shiftId,
+    "Lịch ca ngày 4/11",
+  );
+
+  // Thực hiện DELETE
+  const delRes = await request(`/shifts/${shiftId}`, { method: "DELETE" });
+  assert.equal(delRes.status, 204);
+
+  // Kiểm tra ca vẫn tồn tại qua GET nhưng isActive = false
+  const getRes = await request(`/shifts/${shiftId}`);
+  assert.equal(getRes.status, 200);
+  assert.equal(getRes.body.id, shiftId);
+  assert.equal(getRes.body.isActive, false);
+
+  // Kiểm tra bản ghi lịch phân công vẫn còn nguyên vẹn
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  const schedRes = await client.query(
+    'SELECT * FROM "hr_shifts_schedules"."shift_schedules" WHERE "id" = $1',
+    [scheduleId],
+  );
+  await client.end();
+  assert.equal(schedRes.rows.length, 1);
+  assert.equal(schedRes.rows[0].shiftId, shiftId);
+});
+
+test("SHIFT-04: Sau khi vô hiệu hóa, các bản ghi HrShiftSchedule vẫn còn nguyên", async () => {
+  const created = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "KEEP-SCHED",
+      title: "Ca có nhiều lịch",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const shiftId = created.body.id;
+
+  const s1 = await createSchedule(testTenant, shiftId, "Lịch ca 1");
+  const s2 = await createSchedule(testTenant, shiftId, "Lịch ca 2");
+
+  const delRes = await request(`/shifts/${shiftId}`, { method: "DELETE" });
+  assert.equal(delRes.status, 204);
+
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  const scheds = await client.query(
+    'SELECT * FROM "hr_shifts_schedules"."shift_schedules" WHERE "shiftId" = $1',
+    [shiftId],
+  );
+  await client.end();
+  assert.equal(scheds.rows.length, 2);
+  const ids = scheds.rows.map((r) => r.id);
+  assert.ok(ids.includes(s1));
+  assert.ok(ids.includes(s2));
+});
+
+test("SHIFT-04: Gọi DELETE lần hai với ca đã vô hiệu hóa và có lịch -> xử lý idempotent", async () => {
+  const created = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "IDEMPOTENT",
+      title: "Ca kiểm tra idempotent",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const shiftId = created.body.id;
+
+  await createSchedule(testTenant, shiftId, "Lịch phân ca");
+
+  // Xóa lần 1
+  const del1 = await request(`/shifts/${shiftId}`, { method: "DELETE" });
+  assert.equal(del1.status, 204);
+
+  // Xóa lần 2
+  const del2 = await request(`/shifts/${shiftId}`, { method: "DELETE" });
+  assert.equal(del2.status, 204);
+
+  // Trạng thái vẫn là isActive = false
+  const getRes = await request(`/shifts/${shiftId}`);
+  assert.equal(getRes.status, 200);
+  assert.equal(getRes.body.isActive, false);
+});
+
+test("SHIFT-04: ID không tồn tại -> 404 Not Found", async () => {
+  const fakeId = "00000000-0000-0000-0000-000000000000";
+  const res = await request(`/shifts/${fakeId}`, { method: "DELETE" });
+  assert.equal(res.status, 404);
+});
+
+test("SHIFT-04: Ca thuộc tenant khác -> 404 Not Found, không thay đổi dữ liệu", async () => {
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  const insertRes = await client.query(`
+    INSERT INTO "hr_shifts_schedules"."shifts" (
+      "id", "tenantId", "code", "codeKey", "title", "description",
+      "startTime", "endTime", "endDayOffset", "breakMinutes",
+      "lateGraceMinutes", "earlyLeaveGraceMinutes", "standardUnits",
+      "isActive", "version", "createdAt", "updatedAt"
+    ) VALUES (
+      gen_random_uuid(), '${otherTenant}', 'CA-OTHER-DEL', 'CA-OTHER-DEL', 'Ca tenant khác', '',
+      '1970-01-01 08:00:00', '1970-01-01 17:00:00', 0, 60,
+      15, 15, 1.00, true, 1, NOW(), NOW()
+    ) RETURNING id;
+  `);
+  await client.end();
+
+  const otherId = insertRes.rows[0].id;
+
+  // Cố xóa bằng default tenant
+  const res = await request(`/shifts/${otherId}`, { method: "DELETE" });
+  assert.equal(res.status, 404);
+
+  // Kiểm tra ca của other tenant vẫn còn nguyên vẹn trong DB
+  const client2 = new Client({ connectionString: dbUrl });
+  await client2.connect();
+  const checkRes = await client2.query(
+    'SELECT * FROM "hr_shifts_schedules"."shifts" WHERE "id" = $1',
+    [otherId],
+  );
+  await client2.end();
+  assert.equal(checkRes.rows.length, 1);
+  assert.equal(checkRes.rows[0].code, "CA-OTHER-DEL");
+});
+
+test("SHIFT-04: Thiếu DEFAULT_TENANT_ID -> trả về lỗi cấu hình 500", async () => {
+  delete process.env.DEFAULT_TENANT_ID;
+  const fakeId = "00000000-0000-0000-0000-000000000000";
+  const res = await request(`/shifts/${fakeId}`, { method: "DELETE" });
+  assert.equal(res.status, 500);
+  assert.match(res.body.message, /DEFAULT_TENANT_ID/);
+});
+
+test("SHIFT-04: ID không đúng định dạng UUID -> 400 Bad Request", async () => {
+  const res = await request("/shifts/not-a-valid-uuid", { method: "DELETE" });
+  assert.equal(res.status, 400);
 });
