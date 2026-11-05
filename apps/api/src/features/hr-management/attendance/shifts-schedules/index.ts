@@ -6,5 +6,6 @@ export type {
   ShiftUpdateInput,
   ShiftListQuery,
   ShiftListResponse,
+  CreateShiftAssignmentInput,
+  ShiftAssignmentDto,
 } from "./dto/shifts.dto.js";
-

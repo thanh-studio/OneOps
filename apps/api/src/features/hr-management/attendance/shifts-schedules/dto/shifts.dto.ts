@@ -128,6 +128,113 @@ export type ShiftInput = z.infer<typeof shiftInputSchema>;
 export type ShiftUpdateInput = z.infer<typeof shiftUpdateSchema>;
 export type ShiftListQuery = z.infer<typeof shiftListQuerySchema>;
 
+const dateRegex = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+function isValidCalendarDate(str: string): boolean {
+  if (!dateRegex.test(str)) return false;
+  const [y, m, d] = str.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  );
+}
+
+export const createShiftAssignmentSchema = z
+  .object({
+    assigneeId: z
+      .string()
+      .trim()
+      .min(1, "assigneeId không được để trống")
+      .max(100, "assigneeId tối đa 100 ký tự")
+      .optional(),
+    employeeId: z
+      .string()
+      .trim()
+      .min(1, "employeeId không được để trống")
+      .max(100, "employeeId tối đa 100 ký tự")
+      .optional(),
+    date: z
+      .string()
+      .trim()
+      .regex(dateRegex, "Ngày phân công phải có định dạng YYYY-MM-DD")
+      .optional(),
+    startDate: z
+      .string()
+      .trim()
+      .regex(dateRegex, "Ngày bắt đầu phải có định dạng YYYY-MM-DD")
+      .optional(),
+    endDate: z
+      .string()
+      .trim()
+      .regex(dateRegex, "Ngày kết thúc phải có định dạng YYYY-MM-DD")
+      .optional(),
+    workMode: z.enum(["AT_OFFICE", "REMOTE", "ON_DUTY"]).optional(),
+    workLocation: z.string().trim().max(500).optional(),
+    description: z.string().trim().max(2000).optional(),
+    title: z.string().trim().max(500).optional(),
+    timeZone: z.string().trim().max(100).default("Asia/Ho_Chi_Minh"),
+  })
+  .strict()
+  .refine((data) => Boolean(data.assigneeId || data.employeeId), {
+    message: "Phải cung cấp thông tin nhân viên (assigneeId hoặc employeeId)",
+    path: ["assigneeId"],
+  })
+  .refine((data) => Boolean(data.date || data.startDate), {
+    message: "Phải cung cấp ngày phân công (date hoặc startDate)",
+    path: ["date"],
+  })
+  .refine(
+    (data) => {
+      const d = data.date || data.startDate;
+      return d ? isValidCalendarDate(d) : true;
+    },
+    {
+      message: "Ngày phân công không hợp lệ trên lịch",
+      path: ["date"],
+    },
+  )
+  .refine(
+    (data) => {
+      return data.endDate ? isValidCalendarDate(data.endDate) : true;
+    },
+    {
+      message: "Ngày kết thúc không hợp lệ trên lịch",
+      path: ["endDate"],
+    },
+  );
+
+export type CreateShiftAssignmentInput = z.infer<
+  typeof createShiftAssignmentSchema
+>;
+
+export interface ShiftAssignmentDto {
+  id: string;
+  tenantId: string;
+  shiftId: string;
+  title: string;
+  description: string;
+  startDate: string;
+  endDate: string;
+  startTime: string;
+  endTime: string;
+  timeZone: string;
+  allDay: boolean;
+  status: string;
+  priority: string;
+  assigneeId: string;
+  workMode: string | null;
+  workLocation: string | null;
+  breakMinutes: number;
+  lateGraceMinutes: number;
+  earlyLeaveGraceMinutes: number;
+  standardUnits: number | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ShiftDto {
   id: string;
   tenantId: string;

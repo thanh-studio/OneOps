@@ -16,9 +16,11 @@ import {
   shiftListQuerySchema,
   shiftInputSchema,
   shiftUpdateSchema,
+  createShiftAssignmentSchema,
   type ShiftListQuery,
   type ShiftInput,
   type ShiftUpdateInput,
+  type CreateShiftAssignmentInput,
 } from "./dto/shifts.dto.js";
 import { ShiftsService } from "./shifts.service.js";
 
@@ -57,5 +59,15 @@ export class ShiftsController {
     @Param("id", new ParseUUIDPipe({ errorHttpStatusCode: 400 })) id: string,
   ): Promise<void> {
     await this.service.remove(id);
+  }
+
+  @Post(":id/assignments")
+  @HttpCode(HttpStatus.CREATED)
+  createAssignment(
+    @Param("id", new ParseUUIDPipe({ errorHttpStatusCode: 400 })) id: string,
+    @Body(new SchemaPipe(createShiftAssignmentSchema))
+    input: CreateShiftAssignmentInput,
+  ) {
+    return this.service.createAssignment(id, input);
   }
 }

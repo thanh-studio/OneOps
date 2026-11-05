@@ -740,3 +740,524 @@ test("SHIFT-04: ID không đúng định dạng UUID -> 400 Bad Request", async 
   const res = await request("/shifts/not-a-valid-uuid", { method: "DELETE" });
   assert.equal(res.status, 400);
 });
+
+// ==========================================
+// SHIFT-05: API Phân công ca làm việc (Shift Assignments)
+// ==========================================
+
+test("SHIFT-05: 1. Phân công ca hợp lệ thành công (201 Created)", async () => {
+  const createdShift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-HC",
+      title: "Ca hành chính",
+      description: "Ca từ 8h đến 17h",
+      startTime: "08:00",
+      endTime: "17:00",
+      breakMinutes: 60,
+      standardUnits: 1,
+    },
+  });
+  const shiftId = createdShift.body.id;
+
+  const res = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-01",
+      date: "2026-11-10",
+      workMode: "AT_OFFICE",
+      workLocation: "Tầng 5",
+    },
+  });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.body.shiftId, shiftId);
+  assert.equal(res.body.tenantId, testTenant);
+  assert.equal(res.body.assigneeId, "user-01");
+  assert.equal(res.body.startDate, "2026-11-10");
+  assert.equal(res.body.endDate, "2026-11-10");
+  assert.equal(res.body.startTime, "08:00");
+  assert.equal(res.body.endTime, "17:00");
+  assert.equal(res.body.title, "Ca hành chính");
+  assert.equal(res.body.description, "Ca từ 8h đến 17h");
+  assert.equal(res.body.workMode, "AT_OFFICE");
+  assert.equal(res.body.workLocation, "Tầng 5");
+  assert.equal(res.body.status, "todo");
+  assert.equal(res.body.standardUnits, 1);
+  assert.equal(res.body.allDay, false);
+});
+
+test("SHIFT-05: 2. Ca không tồn tại trả về 404", async () => {
+  const fakeId = "00000000-0000-0000-0000-000000000000";
+  const res = await request(`/shifts/${fakeId}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-01",
+      date: "2026-11-10",
+    },
+  });
+  assert.equal(res.status, 404);
+  assert.match(res.body.message, /Không tìm thấy/);
+});
+
+test("SHIFT-05: 3. Ca thuộc tenant khác trả về 404", async () => {
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  const insertRes = await client.query(`
+    INSERT INTO "hr_shifts_schedules"."shifts" (
+      "id", "tenantId", "code", "codeKey", "title", "description",
+      "startTime", "endTime", "endDayOffset", "breakMinutes",
+      "lateGraceMinutes", "earlyLeaveGraceMinutes", "standardUnits",
+      "isActive", "version", "createdAt", "updatedAt"
+    ) VALUES (
+      gen_random_uuid(), '${otherTenant}', 'CA-OTHER-ASS', 'CA-OTHER-ASS', 'Ca của other tenant', '',
+      '1970-01-01 08:00:00', '1970-01-01 17:00:00', 0, 60,
+      15, 15, 1.00, true, 1, NOW(), NOW()
+    ) RETURNING id;
+  `);
+  await client.end();
+  const otherShiftId = insertRes.rows[0].id;
+
+  const res = await request(`/shifts/${otherShiftId}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-01",
+      date: "2026-11-10",
+    },
+  });
+  assert.equal(res.status, 404);
+});
+
+test("SHIFT-05: 4. Ca đã vô hiệu hóa không thể được phân công (400 Bad Request)", async () => {
+  const createdShift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-INACTIVE",
+      title: "Ca vô hiệu hóa",
+      startTime: "08:00",
+      endTime: "17:00",
+      isActive: false,
+    },
+  });
+  const shiftId = createdShift.body.id;
+
+  const res = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-01",
+      date: "2026-11-10",
+    },
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.message, /vô hiệu hóa/);
+});
+
+test("SHIFT-05: 5. Thiếu thông tin bắt buộc trả về 400", async () => {
+  const createdShift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-THIEU-TT",
+      title: "Ca kiểm tra thiếu thông tin",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const shiftId = createdShift.body.id;
+
+  // Thiếu cả date lẫn startDate
+  const res1 = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-01" },
+  });
+  assert.equal(res1.status, 400);
+
+  // Thiếu cả assigneeId lẫn employeeId
+  const res2 = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: { date: "2026-11-10" },
+  });
+  assert.equal(res2.status, 400);
+});
+
+test("SHIFT-05: 6. Dữ liệu đầu vào sai định dạng trả về 400", async () => {
+  const createdShift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-SAI-DF",
+      title: "Ca kiểm tra sai định dạng",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const shiftId = createdShift.body.id;
+
+  // Sai định dạng ngày
+  const res1 = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-01", date: "2026-13-45" },
+  });
+  assert.equal(res1.status, 400);
+
+  // ID ca không phải UUID
+  const res2 = await request("/shifts/not-a-uuid/assignments", {
+    method: "POST",
+    body: { assigneeId: "user-01", date: "2026-11-10" },
+  });
+  assert.equal(res2.status, 400);
+
+  // Client truyền tenantId trong body
+  const res3 = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-01",
+      date: "2026-11-10",
+      tenantId: "hack-tenant",
+    },
+  });
+  assert.equal(res3.status, 400);
+});
+
+test("SHIFT-05: 7. Phân công trùng lặp bị từ chối (409 Conflict)", async () => {
+  const createdShift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-TRUNG",
+      title: "Ca kiểm tra trùng",
+      startTime: "08:00",
+      endTime: "12:00",
+    },
+  });
+  const shiftId = createdShift.body.id;
+
+  // Lần 1: thành công
+  const res1 = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-01", date: "2026-11-10" },
+  });
+  assert.equal(res1.status, 201);
+
+  // Lần 2: trùng lặp hoàn toàn -> 409 Conflict
+  const res2 = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-01", date: "2026-11-10" },
+  });
+  assert.equal(res2.status, 409);
+  assert.match(res2.body.message, /khoảng thời gian/);
+});
+
+test("SHIFT-05: 8. Nhân viên có lịch chồng lấn bị từ chối (409 Conflict)", async () => {
+  const shift1 = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-S1",
+      title: "Ca 1",
+      startTime: "08:00",
+      endTime: "12:00",
+    },
+  });
+  const shift2 = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-S2",
+      title: "Ca 2 chồng lấn",
+      startTime: "10:00",
+      endTime: "14:00",
+    },
+  });
+
+  // Phân công Ca 1 cho user-01 ngày 2026-11-10
+  const res1 = await request(`/shifts/${shift1.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-01", date: "2026-11-10" },
+  });
+  assert.equal(res1.status, 201);
+
+  // Phân công Ca 2 (10:00-14:00) cho cùng user-01 ngày 2026-11-10 -> 409 Conflict
+  const res2 = await request(`/shifts/${shift2.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-01", date: "2026-11-10" },
+  });
+  assert.equal(res2.status, 409);
+  assert.match(res2.body.message, /khoảng thời gian/);
+});
+
+test("SHIFT-05: 9. Nhân viên có lịch không chồng lấn được phép phân công (201 Created)", async () => {
+  const shiftMorning = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-SANG-9",
+      title: "Ca sáng",
+      startTime: "08:00",
+      endTime: "12:00",
+    },
+  });
+  const shiftAfternoon = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-CHIEU-9",
+      title: "Ca chiều tiếp giáp",
+      startTime: "12:00",
+      endTime: "16:00",
+    },
+  });
+  const shiftEvening = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-TOI-9",
+      title: "Ca tối cách biệt",
+      startTime: "17:00",
+      endTime: "21:00",
+    },
+  });
+
+  // Ca sáng (08:00 - 12:00)
+  const res1 = await request(`/shifts/${shiftMorning.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-02", date: "2026-11-10" },
+  });
+  assert.equal(res1.status, 201);
+
+  // Ca chiều tiếp giáp (12:00 - 16:00) -> Allowed!
+  const res2 = await request(`/shifts/${shiftAfternoon.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-02", date: "2026-11-10" },
+  });
+  assert.equal(res2.status, 201);
+
+  // Ca tối cách biệt (17:00 - 21:00) -> Allowed!
+  const res3 = await request(`/shifts/${shiftEvening.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-02", date: "2026-11-10" },
+  });
+  assert.equal(res3.status, 201);
+});
+
+test("SHIFT-05: 10. Kiểm tra ca qua đêm (endDayOffset = 1)", async () => {
+  const nightShift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-DEM-10",
+      title: "Ca đêm qua ngày",
+      startTime: "22:00",
+      endTime: "06:00",
+      endDayOffset: 1,
+    },
+  });
+  const morningShift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-SANG-10",
+      title: "Ca sáng tiếp giáp",
+      startTime: "06:00",
+      endTime: "14:00",
+    },
+  });
+  const earlyMorningShift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-SOM-10",
+      title: "Ca sáng sớm chồng lấn",
+      startTime: "05:00",
+      endTime: "13:00",
+    },
+  });
+
+  // Phân công ca đêm ngày 2026-11-10 (kết thúc 06:00 ngày 2026-11-11)
+  const resNight = await request(`/shifts/${nightShift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-03", date: "2026-11-10" },
+  });
+  assert.equal(resNight.status, 201);
+  assert.equal(resNight.body.startDate, "2026-11-10");
+  assert.equal(resNight.body.endDate, "2026-11-11");
+
+  // Ca sớm (05:00 - 13:00) ngày 2026-11-11 chồng lấn từ 05:00 - 06:00 -> 409 Conflict
+  const resConflict = await request(
+    `/shifts/${earlyMorningShift.body.id}/assignments`,
+    {
+      method: "POST",
+      body: { assigneeId: "user-03", date: "2026-11-11" },
+    },
+  );
+  assert.equal(resConflict.status, 409);
+
+  // Ca sáng (06:00 - 14:00) ngày 2026-11-11 tiếp giáp ngay 06:00 -> Allowed (201)
+  const resAdjacent = await request(
+    `/shifts/${morningShift.body.id}/assignments`,
+    {
+      method: "POST",
+      body: { assigneeId: "user-03", date: "2026-11-11" },
+    },
+  );
+  assert.equal(resAdjacent.status, 201);
+});
+
+test("SHIFT-05: 11. Không thể truy cập hoặc thao tác dữ liệu tenant khác (Tenant Isolation)", async () => {
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-TENANT-11",
+      title: "Ca kiểm tra tenant",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const shiftId = shift.body.id;
+
+  // Tạo một lịch phân công ở other-tenant cho cùng user-04 cùng ngày giờ
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  await client.query(`
+    INSERT INTO "hr_shifts_schedules"."shift_schedules" (
+      "id", "tenantId", "title", "description",
+      "startDate", "endDate", "startTime", "endTime", "timeZone",
+      "allDay", "status", "priority", "assigneeId", "workMode",
+      "workLocation", "breakMinutes", "lateGraceMinutes", "earlyLeaveGraceMinutes",
+      "standardUnits", "version", "createdAt", "updatedAt"
+    ) VALUES (
+      gen_random_uuid(), '${otherTenant}', 'Lịch tenant khác', '',
+      '2026-11-10', '2026-11-10', '1970-01-01 08:00:00', '1970-01-01 17:00:00', 'Asia/Ho_Chi_Minh',
+      false, 'todo', 'medium', 'user-04', 'AT_OFFICE',
+      '', 60, 15, 15,
+      1.00, 1, NOW(), NOW()
+    );
+  `);
+  await client.end();
+
+  // Phân công ở default tenant cho user-04 phải thành công vì hoàn toàn độc lập với other-tenant
+  const res = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-04", date: "2026-11-10" },
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.tenantId, testTenant);
+});
+
+test("SHIFT-05: 12. Thiếu DEFAULT_TENANT_ID xử lý đúng lỗi cấu hình (500)", async () => {
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-ENV-12",
+      title: "Ca kiểm tra thiếu ENV",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const shiftId = shift.body.id;
+
+  delete process.env.DEFAULT_TENANT_ID;
+
+  const res = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-01", date: "2026-11-10" },
+  });
+  assert.equal(res.status, 500);
+  assert.match(res.body.message, /DEFAULT_TENANT_ID/);
+});
+
+test("SHIFT-05: 13. Hai request đồng thời tạo phân công xung đột không thể cùng thành công", async () => {
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-RACE-13",
+      title: "Ca kiểm tra concurrency race",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const shiftId = shift.body.id;
+
+  // Gửi 2 request đồng thời cho cùng 1 nhân viên cùng 1 ngày
+  const [res1, res2] = await Promise.all([
+    request(`/shifts/${shiftId}/assignments`, {
+      method: "POST",
+      body: { assigneeId: "user-concurrent", date: "2026-11-15" },
+    }),
+    request(`/shifts/${shiftId}/assignments`, {
+      method: "POST",
+      body: { assigneeId: "user-concurrent", date: "2026-11-15" },
+    }),
+  ]);
+
+  const statuses = [res1.status, res2.status].sort();
+  // Một request phải thành công (201), request kia phải bị từ chối với 409
+  assert.equal(statuses[0], 201);
+  assert.equal(statuses[1], 409);
+
+  // Xác nhận trong database chỉ có duy nhất 1 bản ghi được tạo
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  const dbCheck = await client.query(
+    'SELECT count(*) FROM "hr_shifts_schedules"."shift_schedules" WHERE "tenantId" = $1 AND "assigneeId" = $2 AND "startDate" = $3',
+    [testTenant, "user-concurrent", "2026-11-15"],
+  );
+  await client.end();
+  assert.equal(Number(dbCheck.rows[0].count), 1);
+});
+
+test("SHIFT-05: 14. Các trường hợp biên liên quan đến trạng thái phân công (cancelled, archived)", async () => {
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-BIEN-14",
+      title: "Ca kiểm tra trạng thái biên",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const shiftId = shift.body.id;
+
+  // 14a. Tạo 1 lịch đã bị cancelled trong DB
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  await client.query(`
+    INSERT INTO "hr_shifts_schedules"."shift_schedules" (
+      "id", "tenantId", "title", "description",
+      "startDate", "endDate", "startTime", "endTime", "timeZone",
+      "allDay", "status", "priority", "assigneeId", "workMode",
+      "workLocation", "breakMinutes", "lateGraceMinutes", "earlyLeaveGraceMinutes",
+      "standardUnits", "version", "createdAt", "updatedAt"
+    ) VALUES (
+      gen_random_uuid(), '${testTenant}', 'Lịch đã hủy', '',
+      '2026-11-20', '2026-11-20', '1970-01-01 08:00:00', '1970-01-01 17:00:00', 'Asia/Ho_Chi_Minh',
+      false, 'cancelled', 'medium', 'user-status', 'AT_OFFICE',
+      '', 60, 15, 15,
+      1.00, 1, NOW(), NOW()
+    );
+  `);
+  await client.end();
+
+  // Phân công trùng giờ với lịch đã cancelled -> Phải thành công (201)
+  const resCancelled = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-status", date: "2026-11-20" },
+  });
+  assert.equal(resCancelled.status, 201);
+
+  // 14b. Tạo 1 lịch đã bị archived (archivedAt != null) trong DB
+  const client2 = new Client({ connectionString: dbUrl });
+  await client2.connect();
+  await client2.query(`
+    INSERT INTO "hr_shifts_schedules"."shift_schedules" (
+      "id", "tenantId", "title", "description",
+      "startDate", "endDate", "startTime", "endTime", "timeZone",
+      "allDay", "status", "priority", "assigneeId", "workMode",
+      "workLocation", "breakMinutes", "lateGraceMinutes", "earlyLeaveGraceMinutes",
+      "standardUnits", "archivedAt", "version", "createdAt", "updatedAt"
+    ) VALUES (
+      gen_random_uuid(), '${testTenant}', 'Lịch đã lưu trữ', '',
+      '2026-11-21', '2026-11-21', '1970-01-01 08:00:00', '1970-01-01 17:00:00', 'Asia/Ho_Chi_Minh',
+      false, 'completed', 'medium', 'user-status', 'AT_OFFICE',
+      '', 60, 15, 15,
+      1.00, NOW(), 1, NOW(), NOW()
+    );
+  `);
+  await client2.end();
+
+  // Phân công trùng giờ với lịch đã archived -> Phải thành công (201)
+  const resArchived = await request(`/shifts/${shiftId}/assignments`, {
+    method: "POST",
+    body: { assigneeId: "user-status", date: "2026-11-21" },
+  });
+  assert.equal(resArchived.status, 201);
+});
