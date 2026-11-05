@@ -141,6 +141,15 @@ function isValidCalendarDate(str: string): boolean {
   );
 }
 
+function isValidTimeZone(tz: string): boolean {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const createShiftAssignmentSchema = z
   .object({
     assigneeId: z
@@ -174,17 +183,50 @@ export const createShiftAssignmentSchema = z
     workLocation: z.string().trim().max(500).optional(),
     description: z.string().trim().max(2000).optional(),
     title: z.string().trim().max(500).optional(),
-    timeZone: z.string().trim().max(100).default("Asia/Ho_Chi_Minh"),
+    timeZone: z
+      .string()
+      .trim()
+      .max(100)
+      .refine(isValidTimeZone, "Múi giờ (timeZone) không hợp lệ")
+      .default("Asia/Ho_Chi_Minh"),
   })
   .strict()
   .refine((data) => Boolean(data.assigneeId || data.employeeId), {
     message: "Phải cung cấp thông tin nhân viên (assigneeId hoặc employeeId)",
     path: ["assigneeId"],
   })
+  .refine(
+    (data) => {
+      if (
+        data.assigneeId &&
+        data.employeeId &&
+        data.assigneeId !== data.employeeId
+      ) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "assigneeId và employeeId không được mang giá trị khác nhau",
+      path: ["employeeId"],
+    },
+  )
   .refine((data) => Boolean(data.date || data.startDate), {
     message: "Phải cung cấp ngày phân công (date hoặc startDate)",
     path: ["date"],
   })
+  .refine(
+    (data) => {
+      if (data.date && data.startDate && data.date !== data.startDate) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "date và startDate không được mang giá trị khác nhau",
+      path: ["startDate"],
+    },
+  )
   .refine(
     (data) => {
       const d = data.date || data.startDate;

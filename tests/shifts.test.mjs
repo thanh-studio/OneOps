@@ -1261,3 +1261,314 @@ test("SHIFT-05: 14. Các trường hợp biên liên quan đến trạng thái p
   });
   assert.equal(resArchived.status, 201);
 });
+
+// ==========================================
+// SHIFT-05 (FIX REVIEW): TimeZone, Alias, Seconds Precision Tests
+// ==========================================
+
+test("SHIFT-05 (FIX): Alias assigneeId và employeeId cùng gửi với giá trị giống nhau -> 201 Created", async () => {
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-ALIAS-1",
+      title: "Ca test alias 1",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const res = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-alias",
+      employeeId: "user-alias",
+      date: "2026-11-25",
+    },
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.assigneeId, "user-alias");
+});
+
+test("SHIFT-05 (FIX): Alias assigneeId và employeeId khác nhau -> 400 Bad Request", async () => {
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-ALIAS-2",
+      title: "Ca test alias 2",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const res = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-alias-A",
+      employeeId: "user-alias-B",
+      date: "2026-11-25",
+    },
+  });
+  assert.equal(res.status, 400);
+  assert.ok(JSON.stringify(res.body).includes("khác nhau"));
+});
+
+test("SHIFT-05 (FIX): Alias date và startDate cùng gửi với giá trị giống nhau -> 201 Created", async () => {
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-ALIAS-3",
+      title: "Ca test alias 3",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const res = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-alias-3",
+      date: "2026-11-25",
+      startDate: "2026-11-25",
+    },
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.startDate, "2026-11-25");
+});
+
+test("SHIFT-05 (FIX): Alias date và startDate khác nhau -> 400 Bad Request", async () => {
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-ALIAS-4",
+      title: "Ca test alias 4",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const res = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-alias-4",
+      date: "2026-11-25",
+      startDate: "2026-11-26",
+    },
+  });
+  assert.equal(res.status, 400);
+  assert.ok(JSON.stringify(res.body).includes("khác nhau"));
+});
+
+test("SHIFT-05 (FIX): TimeZone không hợp lệ -> 400 Bad Request", async () => {
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-TZ-INVALID",
+      title: "Ca test timezone invalid",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const res = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-tz",
+      date: "2026-11-25",
+      timeZone: "Invalid/Not_A_Timezone",
+    },
+  });
+  assert.equal(res.status, 400);
+  assert.ok(JSON.stringify(res.body).includes("Múi giờ"));
+});
+
+test("SHIFT-05 (FIX): Hai lịch cùng thời điểm thực tế nhưng khác múi giờ -> Bị từ chối 409 Conflict", async () => {
+  // Ca 1: 08:00 - 12:00 (Asia/Ho_Chi_Minh, UTC+7) -> 01:00 - 05:00 UTC
+  const shiftVN = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-VN-TZ",
+      title: "Ca Việt Nam",
+      startTime: "08:00",
+      endTime: "12:00",
+    },
+  });
+  // Ca 2: 10:00 - 14:00 (Asia/Tokyo, UTC+9) -> 01:00 - 05:00 UTC
+  const shiftTokyo = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-TOKYO-TZ",
+      title: "Ca Tokyo",
+      startTime: "10:00",
+      endTime: "14:00",
+    },
+  });
+
+  // Phân công Ca VN
+  const res1 = await request(`/shifts/${shiftVN.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-multitz",
+      date: "2026-11-25",
+      timeZone: "Asia/Ho_Chi_Minh",
+    },
+  });
+  assert.equal(res1.status, 201);
+
+  // Phân công Ca Tokyo cho cùng người: dù giờ địa phương là 10h-14h nhưng cùng thời điểm 01h-05h UTC -> 409 Conflict!
+  const res2 = await request(`/shifts/${shiftTokyo.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-multitz",
+      date: "2026-11-25",
+      timeZone: "Asia/Tokyo",
+    },
+  });
+  assert.equal(res2.status, 409);
+  assert.match(res2.body.message, /khoảng thời gian/);
+});
+
+test("SHIFT-05 (FIX): Hai lịch có giờ địa phương giống nhau nhưng thời điểm UTC khác nhau -> 201 Created", async () => {
+  // Ca VN: 08:00 - 12:00 (Asia/Ho_Chi_Minh, UTC+7) -> 01:00 - 05:00 UTC
+  const shiftVN = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-DIFF-UTC-1",
+      title: "Ca VN 08-12",
+      startTime: "08:00",
+      endTime: "12:00",
+    },
+  });
+  // Ca UTC: 08:00 - 12:00 (UTC, UTC+0) -> 08:00 - 12:00 UTC
+  const shiftUTC = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-DIFF-UTC-2",
+      title: "Ca UTC 08-12",
+      startTime: "08:00",
+      endTime: "12:00",
+    },
+  });
+
+  // Phân công Ca VN
+  const res1 = await request(`/shifts/${shiftVN.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-difftz",
+      date: "2026-11-25",
+      timeZone: "Asia/Ho_Chi_Minh",
+    },
+  });
+  assert.equal(res1.status, 201);
+
+  // Phân công Ca UTC: Cùng là 08:00 địa phương nhưng lệch nhau 7 tiếng UTC -> Không xung đột (201)!
+  const res2 = await request(`/shifts/${shiftUTC.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-difftz",
+      date: "2026-11-25",
+      timeZone: "UTC",
+    },
+  });
+  assert.equal(res2.status, 201);
+});
+
+test("SHIFT-05 (FIX): Phân công với múi giờ có DST (Daylight Saving Time)", async () => {
+  const shiftNY = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-NY-DST",
+      title: "Ca New York",
+      startTime: "09:00",
+      endTime: "17:00",
+    },
+  });
+
+  // Phân công vào mùa hè (EDT, UTC-4)
+  const resSummer = await request(`/shifts/${shiftNY.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-dst",
+      date: "2026-07-15",
+      timeZone: "America/New_York",
+    },
+  });
+  assert.equal(resSummer.status, 201);
+
+  // Phân công vào mùa đông (EST, UTC-5)
+  const resWinter = await request(`/shifts/${shiftNY.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-dst",
+      date: "2026-12-15",
+      timeZone: "America/New_York",
+    },
+  });
+  assert.equal(resWinter.status, 201);
+});
+
+test("SHIFT-05 (FIX): Giữ nguyên độ chính xác giây (HH:mm:ss)", async () => {
+  // Ca có giây: 08:30:15 đến 17:00:45
+  const shiftWithSeconds = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-SECONDS-PREC",
+      title: "Ca chính xác từng giây",
+      startTime: "08:30:15",
+      endTime: "17:00:45",
+    },
+  });
+  assert.equal(shiftWithSeconds.status, 201);
+  assert.equal(shiftWithSeconds.body.startTime, "08:30:15");
+  assert.equal(shiftWithSeconds.body.endTime, "17:00:45");
+
+  // Phân công ca có giây
+  const res = await request(`/shifts/${shiftWithSeconds.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: "user-seconds",
+      date: "2026-11-25",
+    },
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.startTime, "08:30:15");
+  assert.equal(res.body.endTime, "17:00:45");
+
+  // Ca tiếp giáp đúng giây 17:00:45 -> 20:00:00
+  const shiftAdjacentSeconds = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-SECONDS-ADJ",
+      title: "Ca tiếp giáp giây",
+      startTime: "17:00:45",
+      endTime: "20:00:00",
+    },
+  });
+  const resAdj = await request(
+    `/shifts/${shiftAdjacentSeconds.body.id}/assignments`,
+    {
+      method: "POST",
+      body: {
+        assigneeId: "user-seconds",
+        date: "2026-11-25",
+      },
+    },
+  );
+  assert.equal(resAdj.status, 201);
+
+  // Ca chồng lấn 1 giây (17:00:44 -> 20:00:00) -> 409 Conflict!
+  const shiftOverlapSeconds = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: "CA-SECONDS-OVL",
+      title: "Ca chồng lấn 1 giây",
+      startTime: "17:00:44",
+      endTime: "20:00:00",
+    },
+  });
+  const resOvl = await request(
+    `/shifts/${shiftOverlapSeconds.body.id}/assignments`,
+    {
+      method: "POST",
+      body: {
+        assigneeId: "user-seconds",
+        date: "2026-11-25",
+      },
+    },
+  );
+  assert.equal(resOvl.status, 409);
+});

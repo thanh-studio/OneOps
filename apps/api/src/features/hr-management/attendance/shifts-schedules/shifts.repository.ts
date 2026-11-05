@@ -29,13 +29,30 @@ function parseTimeToDate(val: string): Date {
 
 function formatTimeFromDate(val: Date | string): string {
   if (val instanceof Date) {
-    return val.toISOString().slice(11, 16);
+    const full = val.toISOString().slice(11, 19);
+    return full.endsWith(":00") ? full.slice(0, 5) : full;
   }
-  const str = String(val);
+  const str = String(val).trim();
+  const timePart = str.includes("T") ? str.split("T")[1].slice(0, 8) : str;
+  return timePart.length >= 8 && timePart.endsWith(":00")
+    ? timePart.slice(0, 5)
+    : timePart.slice(0, 8);
+}
+
+function formatTimeWithSeconds(val: Date | string | null): string {
+  if (!val) return "00:00:00";
+  if (val instanceof Date) {
+    return val.toISOString().slice(11, 19);
+  }
+  const str = String(val).trim();
   if (str.includes("T")) {
-    return str.split("T")[1].slice(0, 5);
+    return str.split("T")[1].slice(0, 8);
   }
-  return str.slice(0, 5);
+  const parts = str.split(":");
+  const hh = (parts[0] || "00").padStart(2, "0");
+  const mm = (parts[1] || "00").padStart(2, "0");
+  const ss = (parts[2] || "00").slice(0, 2).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
 }
 
 function formatDateToString(val: Date | string): string {
@@ -55,6 +72,81 @@ function addDaysToDateStr(dateStr: string, days: number): string {
   const nm = String(dt.getUTCMonth() + 1).padStart(2, "0");
   const nd = String(dt.getUTCDate()).padStart(2, "0");
   return `${ny}-${nm}-${nd}`;
+}
+
+function getUtcTimestamp(
+  dateStr: string,
+  timeStr: string,
+  timeZone = "Asia/Ho_Chi_Minh",
+): number {
+  const parts = timeStr.trim().split(":");
+  const hh = (parts[0] || "00").padStart(2, "0");
+  const mm = (parts[1] || "00").padStart(2, "0");
+  const ss = (parts[2] || "00").slice(0, 2).padStart(2, "0");
+  const fullTime = `${hh}:${mm}:${ss}`;
+
+  let guessMs = Date.parse(`${dateStr}T${fullTime}.000Z`);
+  let dtf: Intl.DateTimeFormat;
+  try {
+    dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  }
+
+  function parseFormatted(formattedParts: Intl.DateTimeFormatPart[]): number {
+    let y = 0,
+      m = 0,
+      d = 0,
+      h = 0,
+      min = 0,
+      s = 0;
+    for (const part of formattedParts) {
+      if (part.type === "year") y = Number(part.value);
+      if (part.type === "month") m = Number(part.value);
+      if (part.type === "day") d = Number(part.value);
+      if (part.type === "hour") {
+        h = Number(part.value);
+        if (h === 24) h = 0;
+      }
+      if (part.type === "minute") min = Number(part.value);
+      if (part.type === "second") s = Number(part.value);
+    }
+    return Date.UTC(y, m - 1, d, h, min, s);
+  }
+
+  for (let i = 0; i < 3; i++) {
+    const formattedDate = parseFormatted(dtf.formatToParts(guessMs));
+    const targetLocalUtc = Date.UTC(
+      Number(dateStr.slice(0, 4)),
+      Number(dateStr.slice(5, 7)) - 1,
+      Number(dateStr.slice(8, 10)),
+      Number(hh),
+      Number(mm),
+      Number(ss),
+    );
+    const diff = targetLocalUtc - formattedDate;
+    if (diff === 0) break;
+    guessMs += diff;
+  }
+  return guessMs;
 }
 
 @Injectable()
@@ -354,17 +446,25 @@ export class ShiftsRepository {
           }
           const endDateStr = calculatedEndDateStr;
 
-          const startTimeStr = formatTimeFromDate(shift.startTime);
-          const endTimeStr = formatTimeFromDate(shift.endTime);
+          const targetTimeZone = input.timeZone || "Asia/Ho_Chi_Minh";
+          const startTimeStr = formatTimeWithSeconds(shift.startTime);
+          const endTimeStr = formatTimeWithSeconds(shift.endTime);
 
-          const newStartMs = Date.parse(
-            `${startDateStr}T${startTimeStr}:00.000Z`,
+          const newStartMs = getUtcTimestamp(
+            startDateStr,
+            startTimeStr,
+            targetTimeZone,
           );
-          const newEndMs = Date.parse(`${endDateStr}T${endTimeStr}:00.000Z`);
+          const newEndMs = getUtcTimestamp(
+            endDateStr,
+            endTimeStr,
+            targetTimeZone,
+          );
 
           // Query candidate schedules for the same assignee within overlapping date window
-          const minCandidateDate = addDaysToDateStr(startDateStr, -1);
-          const maxCandidateDate = endDateStr;
+          // Buffer of 2 days handles date line differences across timezones (-12h to +14h)
+          const minCandidateDate = addDaysToDateStr(startDateStr, -2);
+          const maxCandidateDate = addDaysToDateStr(endDateStr, 2);
 
           const candidates = await this.scheduleTable(tx).findMany({
             where: {
@@ -380,21 +480,23 @@ export class ShiftsRepository {
           for (const cand of candidates) {
             const exStartStr = formatDateToString(cand.startDate);
             const exEndStr = formatDateToString(cand.endDate);
+            const candTimeZone = cand.timeZone || "Asia/Ho_Chi_Minh";
 
             let exStartMs: number;
             let exEndMs: number;
 
             if (cand.allDay) {
-              exStartMs = Date.parse(`${exStartStr}T00:00:00.000Z`);
-              exEndMs = Date.parse(
-                `${addDaysToDateStr(exEndStr, 1)}T00:00:00.000Z`,
+              exStartMs = getUtcTimestamp(exStartStr, "00:00:00", candTimeZone);
+              exEndMs = getUtcTimestamp(
+                addDaysToDateStr(exEndStr, 1),
+                "00:00:00",
+                candTimeZone,
               );
             } else {
-              const candStart =
-                formatTimeFromDate(cand.startTime ?? "") || "00:00";
-              const candEnd = formatTimeFromDate(cand.endTime ?? "") || "23:59";
-              exStartMs = Date.parse(`${exStartStr}T${candStart}:00.000Z`);
-              exEndMs = Date.parse(`${exEndStr}T${candEnd}:00.000Z`);
+              const candStart = formatTimeWithSeconds(cand.startTime);
+              const candEnd = formatTimeWithSeconds(cand.endTime);
+              exStartMs = getUtcTimestamp(exStartStr, candStart, candTimeZone);
+              exEndMs = getUtcTimestamp(exEndStr, candEnd, candTimeZone);
             }
 
             if (exStartMs < newEndMs && exEndMs > newStartMs) {
