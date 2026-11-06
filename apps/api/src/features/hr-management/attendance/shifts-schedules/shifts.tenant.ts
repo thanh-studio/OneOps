@@ -12,4 +12,3 @@ export class TenantContext {
     return tenantId;
   }
 }
-

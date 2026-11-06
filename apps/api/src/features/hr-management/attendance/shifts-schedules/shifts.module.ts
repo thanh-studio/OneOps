@@ -12,4 +12,3 @@ import { TenantContext } from "./shifts.tenant.js";
   exports: [ShiftsService],
 })
 export class ShiftsSchedulesModule {}
-

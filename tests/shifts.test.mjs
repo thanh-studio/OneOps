@@ -1572,3 +1572,461 @@ test("SHIFT-05 (FIX): Giữ nguyên độ chính xác giây (HH:mm:ss)", async (
   );
   assert.equal(resOvl.status, 409);
 });
+
+// ========================================================
+// SHIFT-06 TESTS: API TRUY VẤN LỊCH PHÂN CA (GET /shifts/schedules)
+// ========================================================
+
+test("SHIFT-06: 1. Truy vấn lịch phân ca thành công với khoảng ngày hợp lệ (200 OK)", async () => {
+  const code = `CA-Q1-${Date.now()}`;
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code,
+      title: "Ca truy vấn chuẩn",
+      startTime: "08:30",
+      endTime: "17:30",
+    },
+  });
+  assert.equal(shift.status, 201);
+
+  const assignee = `user-q1-${Date.now()}`;
+  const assign = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: {
+      assigneeId: assignee,
+      date: "2026-12-05",
+      workMode: "AT_OFFICE",
+    },
+  });
+  assert.equal(assign.status, 201);
+
+  const res = await request("/shifts/schedules?from=2026-12-01&to=2026-12-10");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.from, "2026-12-01");
+  assert.equal(res.body.to, "2026-12-10");
+  assert.ok(Array.isArray(res.body.items));
+  assert.ok(res.body.total >= 1);
+  assert.equal(res.body.page, 1);
+  assert.equal(res.body.pageSize, 100);
+
+  const found = res.body.items.find((item) => item.id === assign.body.id);
+  assert.ok(found, "Phải tìm thấy lịch vừa phân công");
+  assert.equal(found.assigneeId, assignee);
+  assert.equal(found.startDate, "2026-12-05");
+  assert.equal(found.endDate, "2026-12-05");
+  assert.equal(found.startTime, "08:30");
+  assert.equal(found.endTime, "17:30");
+  assert.equal(found.workMode, "AT_OFFICE");
+  assert.ok(found.shift, "Phải kèm theo thông tin chi tiết của mẫu ca");
+  assert.equal(found.shift.id, shift.body.id);
+  assert.equal(found.shift.code, code);
+});
+
+test("SHIFT-06: 2. Khoảng ngày không có dữ liệu trả về mảng rỗng và total = 0", async () => {
+  const res = await request("/shifts/schedules?from=2099-01-01&to=2099-01-31");
+  assert.equal(res.status, 200);
+  assert.equal(res.body.from, "2099-01-01");
+  assert.equal(res.body.to, "2099-01-31");
+  assert.deepEqual(res.body.items, []);
+  assert.equal(res.body.total, 0);
+});
+
+test("SHIFT-06: 3. Lọc theo assigneeId và alias employeeId", async () => {
+  const code = `CA-Q3-${Date.now()}`;
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code,
+      title: "Ca test lọc nhân viên",
+      startTime: "09:00",
+      endTime: "18:00",
+    },
+  });
+
+  const empA = `emp-A-${Date.now()}`;
+  const empB = `emp-B-${Date.now()}`;
+
+  await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: empA, date: "2026-12-15" },
+  });
+  await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: empB, date: "2026-12-15" },
+  });
+
+  // Lọc theo assigneeId
+  const resA = await request(
+    `/shifts/schedules?from=2026-12-01&to=2026-12-31&assigneeId=${empA}`,
+  );
+  assert.equal(resA.status, 200);
+  assert.equal(resA.body.items.length, 1);
+  assert.equal(resA.body.items[0].assigneeId, empA);
+
+  // Lọc theo alias employeeId
+  const resB = await request(
+    `/shifts/schedules?from=2026-12-01&to=2026-12-31&employeeId=${empB}`,
+  );
+  assert.equal(resB.status, 200);
+  assert.equal(resB.body.items.length, 1);
+  assert.equal(resB.body.items[0].assigneeId, empB);
+
+  // Dùng startDate/endDate alias thay cho from/to
+  const resAliasDates = await request(
+    `/shifts/schedules?startDate=2026-12-01&endDate=2026-12-31&assigneeId=${empA}`,
+  );
+  assert.equal(resAliasDates.status, 200);
+  assert.equal(resAliasDates.body.from, "2026-12-01");
+  assert.equal(resAliasDates.body.to, "2026-12-31");
+  assert.equal(resAliasDates.body.items.length, 1);
+});
+
+test("SHIFT-06: 4. Lọc theo shiftId", async () => {
+  const code1 = `CA-S1-${Date.now()}`;
+  const code2 = `CA-S2-${Date.now()}`;
+  const shift1 = await request("/shifts", {
+    method: "POST",
+    body: { code: code1, title: "Ca 1", startTime: "08:00", endTime: "12:00" },
+  });
+  const shift2 = await request("/shifts", {
+    method: "POST",
+    body: { code: code2, title: "Ca 2", startTime: "13:00", endTime: "17:00" },
+  });
+
+  const emp = `emp-s-${Date.now()}`;
+  await request(`/shifts/${shift1.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-20" },
+  });
+  await request(`/shifts/${shift2.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-20" },
+  });
+
+  const res = await request(
+    `/shifts/schedules?from=2026-12-01&to=2026-12-31&shiftId=${shift1.body.id}`,
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.body.items.length, 1);
+  assert.equal(res.body.items[0].shiftId, shift1.body.id);
+  assert.equal(res.body.items[0].shift.code, code1);
+});
+
+test("SHIFT-06: 5. Lọc theo status và workMode", async () => {
+  const code = `CA-MODE-${Date.now()}`;
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: { code, title: "Ca Mode", startTime: "08:00", endTime: "16:00" },
+  });
+
+  const empOffice = `emp-off-${Date.now()}`;
+  const empRemote = `emp-rem-${Date.now()}`;
+
+  await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: empOffice, date: "2026-12-22", workMode: "AT_OFFICE" },
+  });
+  await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: empRemote, date: "2026-12-22", workMode: "REMOTE" },
+  });
+
+  // Lọc workMode = REMOTE
+  const resRemote = await request(
+    `/shifts/schedules?from=2026-12-20&to=2026-12-25&workMode=REMOTE`,
+  );
+  assert.equal(resRemote.status, 200);
+  const foundRemote = resRemote.body.items.find(
+    (i) => i.assigneeId === empRemote,
+  );
+  assert.ok(foundRemote);
+  assert.equal(foundRemote.workMode, "REMOTE");
+  const foundOffice = resRemote.body.items.find(
+    (i) => i.assigneeId === empOffice,
+  );
+  assert.equal(foundOffice, undefined);
+
+  // Lọc status = todo (mặc định)
+  const resTodo = await request(
+    `/shifts/schedules?from=2026-12-20&to=2026-12-25&status=todo`,
+  );
+  assert.equal(resTodo.status, 200);
+  assert.ok(resTodo.body.items.some((i) => i.assigneeId === empOffice));
+});
+
+test("SHIFT-06: 6. Kiểm tra giao thoa khoảng ngày (Boundary & Overlap range)", async () => {
+  const code = `CA-BOUND-${Date.now()}`;
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: { code, title: "Ca boundary", startTime: "08:00", endTime: "17:00" },
+  });
+
+  const emp = `emp-bound-${Date.now()}`;
+
+  // Ca 1: 2026-12-10 (trước khoảng [12-12, 12-15]) -> Không được xuất hiện
+  await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-10" },
+  });
+  // Ca 2: 2026-12-12 (đúng ngày from) -> Phải xuất hiện
+  const a2 = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-12" },
+  });
+  // Ca 3: 2026-12-14 (giữa khoảng) -> Phải xuất hiện
+  const a3 = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-14" },
+  });
+  // Ca 4: 2026-12-15 (đúng ngày to) -> Phải xuất hiện
+  const a4 = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-15" },
+  });
+  // Ca 5: 2026-12-18 (sau ngày to) -> Không được xuất hiện
+  await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-18" },
+  });
+
+  const res = await request(
+    `/shifts/schedules?from=2026-12-12&to=2026-12-15&assigneeId=${emp}`,
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.body.items.length, 3);
+  const ids = res.body.items.map((i) => i.id);
+  assert.ok(ids.includes(a2.body.id));
+  assert.ok(ids.includes(a3.body.id));
+  assert.ok(ids.includes(a4.body.id));
+});
+
+test("SHIFT-06: 7. Ca qua đêm giao thoa ở ngày biên (Overnight shifts span)", async () => {
+  const code = `CA-NIGHT-Q-${Date.now()}`;
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code,
+      title: "Ca qua đêm truy vấn",
+      startTime: "22:00",
+      endTime: "06:00",
+      endDayOffset: 1,
+    },
+  });
+
+  const empNight1 = `emp-n1-${Date.now()}`;
+  const empNight2 = `emp-n2-${Date.now()}`;
+
+  // Ca bắt đầu 2026-12-19, kết thúc 2026-12-20
+  // Truy vấn khoảng [2026-12-20, 2026-12-25] -> Ca này kết thúc đúng ngày from (12-20) -> Phải xuất hiện!
+  const a1 = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: empNight1, date: "2026-12-19" },
+  });
+
+  // Ca bắt đầu 2026-12-25, kết thúc 2026-12-26
+  // Truy vấn khoảng [2026-12-20, 2026-12-25] -> Ca này bắt đầu đúng ngày to (12-25) -> Phải xuất hiện!
+  const a2 = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: empNight2, date: "2026-12-25" },
+  });
+
+  const res = await request("/shifts/schedules?from=2026-12-20&to=2026-12-25");
+  assert.equal(res.status, 200);
+  const ids = res.body.items.map((i) => i.id);
+  assert.ok(
+    ids.includes(a1.body.id),
+    "Ca qua đêm bắt đầu hôm trước kết thúc ngày from phải được bao gồm",
+  );
+  assert.ok(
+    ids.includes(a2.body.id),
+    "Ca qua đêm bắt đầu ngày to kết thúc hôm sau phải được bao gồm",
+  );
+});
+
+test("SHIFT-06: 8. Bộ lọc includeArchived (mặc định không có lịch lưu trữ)", async () => {
+  const code = `CA-ARCH-${Date.now()}`;
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: { code, title: "Ca Archive", startTime: "08:00", endTime: "12:00" },
+  });
+
+  const emp = `emp-arch-${Date.now()}`;
+  const assign = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-28" },
+  });
+
+  // Đánh dấu archived trực tiếp trong DB bằng Client pg
+  const client = new Client({ connectionString: dbUrl });
+  await client.connect();
+  await client.query(
+    'UPDATE "hr_shifts_schedules"."shift_schedules" SET "archivedAt" = NOW() WHERE id = $1',
+    [assign.body.id],
+  );
+  await client.end();
+
+  // Mặc định includeArchived = false -> Không thấy
+  const resDefault = await request(
+    `/shifts/schedules?from=2026-12-25&to=2026-12-30&assigneeId=${emp}`,
+  );
+  assert.equal(resDefault.status, 200);
+  assert.equal(resDefault.body.items.length, 0);
+
+  // includeArchived = true -> Phải thấy
+  const resArchived = await request(
+    `/shifts/schedules?from=2026-12-25&to=2026-12-30&assigneeId=${emp}&includeArchived=true`,
+  );
+  assert.equal(resArchived.status, 200);
+  assert.equal(resArchived.body.items.length, 1);
+  assert.equal(resArchived.body.items[0].id, assign.body.id);
+});
+
+test("SHIFT-06: 9. Phân trang và thứ tự sắp xếp thời gian (Pagination & Ordering)", async () => {
+  const code = `CA-PAGE-${Date.now()}`;
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code,
+      title: "Ca phân trang",
+      startTime: "08:00",
+      endTime: "12:00",
+    },
+  });
+
+  const emp = `emp-page-${Date.now()}`;
+  await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-01" },
+  });
+  await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-02" },
+  });
+  await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-03" },
+  });
+
+  // Page 1: pageSize = 2
+  const p1 = await request(
+    `/shifts/schedules?from=2026-12-01&to=2026-12-05&assigneeId=${emp}&page=1&pageSize=2`,
+  );
+  assert.equal(p1.status, 200);
+  assert.equal(p1.body.page, 1);
+  assert.equal(p1.body.pageSize, 2);
+  assert.equal(p1.body.total, 3);
+  assert.equal(p1.body.items.length, 2);
+  assert.equal(p1.body.items[0].startDate, "2026-12-01");
+  assert.equal(p1.body.items[1].startDate, "2026-12-02");
+
+  // Page 2: pageSize = 2
+  const p2 = await request(
+    `/shifts/schedules?from=2026-12-01&to=2026-12-05&assigneeId=${emp}&page=2&pageSize=2`,
+  );
+  assert.equal(p2.status, 200);
+  assert.equal(p2.body.page, 2);
+  assert.equal(p2.body.pageSize, 2);
+  assert.equal(p2.body.total, 3);
+  assert.equal(p2.body.items.length, 1);
+  assert.equal(p2.body.items[0].startDate, "2026-12-03");
+});
+
+test("SHIFT-06: 10. Tenant Isolation (Không thể đọc lịch của tenant khác)", async () => {
+  const code = `CA-ISO-Q-${Date.now()}`;
+  const shift = await request("/shifts", {
+    method: "POST",
+    body: { code, title: "Ca isolation", startTime: "08:00", endTime: "17:00" },
+  });
+
+  const emp = `emp-iso-${Date.now()}`;
+  const assign = await request(`/shifts/${shift.body.id}/assignments`, {
+    method: "POST",
+    body: { assigneeId: emp, date: "2026-12-10" },
+  });
+
+  // Tạo một ca và schedule ở otherTenant bằng API
+  process.env.DEFAULT_TENANT_ID = otherTenant;
+  const otherShift = await request("/shifts", {
+    method: "POST",
+    body: {
+      code: `OTHER-${Date.now()}`,
+      title: "Ca tenant khác",
+      startTime: "08:00",
+      endTime: "17:00",
+    },
+  });
+  const otherAssign = await request(
+    `/shifts/${otherShift.body.id}/assignments`,
+    {
+      method: "POST",
+      body: { assigneeId: emp, date: "2026-12-10" },
+    },
+  );
+  assert.equal(otherAssign.status, 201);
+
+  // Đổi lại default tenant
+  process.env.DEFAULT_TENANT_ID = testTenant;
+
+  // Truy vấn với tenant mặc định -> Chỉ thấy lịch của tenant mặc định
+  const res = await request(
+    `/shifts/schedules?from=2026-12-01&to=2026-12-31&assigneeId=${emp}`,
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.body.items.length, 1);
+  assert.equal(res.body.items[0].id, assign.body.id);
+  assert.equal(res.body.items[0].tenantId, "default");
+  assert.ok(!res.body.items.some((i) => i.id === otherAssign.body.id));
+});
+
+test("SHIFT-06: 11. Thiếu DEFAULT_TENANT_ID xử lý đúng lỗi cấu hình (500)", async () => {
+  delete process.env.DEFAULT_TENANT_ID;
+  const res = await request("/shifts/schedules?from=2026-12-01&to=2026-12-31");
+  assert.equal(res.status, 500);
+  assert.match(res.body.message, /DEFAULT_TENANT_ID/);
+});
+
+test("SHIFT-06: 12. Xử lý lỗi validate: Thiếu from/to, sai format, ngày dương lịch không tồn tại", async () => {
+  // Thiếu from
+  const r1 = await request("/shifts/schedules?to=2026-12-10");
+  assert.equal(r1.status, 400);
+
+  // Thiếu to
+  const r2 = await request("/shifts/schedules?from=2026-12-01");
+  assert.equal(r2.status, 400);
+
+  // Sai định dạng ngày
+  const r3 = await request("/shifts/schedules?from=2026/12/01&to=2026-12-10");
+  assert.equal(r3.status, 400);
+
+  // Ngày không tồn tại trên lịch (31/02)
+  const r4 = await request("/shifts/schedules?from=2026-02-31&to=2026-03-05");
+  assert.equal(r4.status, 400);
+  assert.ok(JSON.stringify(r4.body).includes("không hợp lệ trên lịch"));
+
+  // from > to
+  const r5 = await request("/shifts/schedules?from=2026-12-20&to=2026-12-10");
+  assert.equal(r5.status, 400);
+  assert.ok(JSON.stringify(r5.body).includes("không được sau ngày kết thúc"));
+
+  // Alias from và startDate khác nhau
+  const r6 = await request(
+    "/shifts/schedules?from=2026-12-01&startDate=2026-12-02&to=2026-12-10",
+  );
+  assert.equal(r6.status, 400);
+  assert.ok(JSON.stringify(r6.body).includes("khác nhau"));
+
+  // Alias to và endDate khác nhau
+  const r7 = await request(
+    "/shifts/schedules?from=2026-12-01&to=2026-12-10&endDate=2026-12-15",
+  );
+  assert.equal(r7.status, 400);
+  assert.ok(JSON.stringify(r7.body).includes("khác nhau"));
+
+  // Alias assigneeId và employeeId khác nhau
+  const r8 = await request(
+    "/shifts/schedules?from=2026-12-01&to=2026-12-10&assigneeId=user1&employeeId=user2",
+  );
+  assert.equal(r8.status, 400);
+  assert.ok(JSON.stringify(r8.body).includes("khác nhau"));
+});

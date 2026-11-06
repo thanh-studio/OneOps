@@ -8,4 +8,7 @@ export type {
   ShiftListResponse,
   CreateShiftAssignmentInput,
   ShiftAssignmentDto,
+  ShiftScheduleQuery,
+  ShiftScheduleItemDto,
+  ShiftScheduleResponse,
 } from "./dto/shifts.dto.js";

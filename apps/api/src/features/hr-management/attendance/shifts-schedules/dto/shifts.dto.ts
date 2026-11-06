@@ -302,3 +302,138 @@ export interface ShiftListResponse {
   page: number;
   pageSize: number;
 }
+
+export const shiftScheduleQuerySchema = z
+  .object({
+    from: z
+      .string()
+      .trim()
+      .regex(dateRegex, "Ngày bắt đầu (from) phải có định dạng YYYY-MM-DD")
+      .optional(),
+    startDate: z
+      .string()
+      .trim()
+      .regex(dateRegex, "Ngày bắt đầu (startDate) phải có định dạng YYYY-MM-DD")
+      .optional(),
+    to: z
+      .string()
+      .trim()
+      .regex(dateRegex, "Ngày kết thúc (to) phải có định dạng YYYY-MM-DD")
+      .optional(),
+    endDate: z
+      .string()
+      .trim()
+      .regex(dateRegex, "Ngày kết thúc (endDate) phải có định dạng YYYY-MM-DD")
+      .optional(),
+    assigneeId: z.string().trim().min(1).max(100).optional(),
+    employeeId: z.string().trim().min(1).max(100).optional(),
+    shiftId: z.string().trim().max(100).optional(),
+    status: z
+      .enum(["todo", "in_progress", "completed", "cancelled"])
+      .optional(),
+    workMode: z.enum(["AT_OFFICE", "REMOTE", "ON_DUTY"]).optional(),
+    includeArchived: z
+      .union([z.boolean(), z.enum(["true", "false"])])
+      .transform((val) => (typeof val === "boolean" ? val : val === "true"))
+      .default(false),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(500).default(100),
+  })
+  .strict()
+  .refine((data) => Boolean(data.from || data.startDate), {
+    message: "Phải cung cấp ngày bắt đầu (from hoặc startDate)",
+    path: ["from"],
+  })
+  .refine((data) => Boolean(data.to || data.endDate), {
+    message: "Phải cung cấp ngày kết thúc (to hoặc endDate)",
+    path: ["to"],
+  })
+  .refine(
+    (data) => {
+      if (data.from && data.startDate && data.from !== data.startDate) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "from và startDate không được mang giá trị khác nhau",
+      path: ["startDate"],
+    },
+  )
+  .refine(
+    (data) => {
+      if (data.to && data.endDate && data.to !== data.endDate) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "to và endDate không được mang giá trị khác nhau",
+      path: ["endDate"],
+    },
+  )
+  .refine(
+    (data) => {
+      if (
+        data.assigneeId &&
+        data.employeeId &&
+        data.assigneeId !== data.employeeId
+      ) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "assigneeId và employeeId không được mang giá trị khác nhau",
+      path: ["employeeId"],
+    },
+  )
+  .refine(
+    (data) => {
+      const f = data.from || data.startDate;
+      return f ? isValidCalendarDate(f) : true;
+    },
+    {
+      message: "Ngày bắt đầu không hợp lệ trên lịch",
+      path: ["from"],
+    },
+  )
+  .refine(
+    (data) => {
+      const t = data.to || data.endDate;
+      return t ? isValidCalendarDate(t) : true;
+    },
+    {
+      message: "Ngày kết thúc không hợp lệ trên lịch",
+      path: ["to"],
+    },
+  )
+  .refine(
+    (data) => {
+      const f = data.from || data.startDate;
+      const t = data.to || data.endDate;
+      if (f && t && f > t) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "Ngày bắt đầu không được sau ngày kết thúc",
+      path: ["from"],
+    },
+  );
+
+export type ShiftScheduleQuery = z.infer<typeof shiftScheduleQuerySchema>;
+
+export interface ShiftScheduleItemDto extends ShiftAssignmentDto {
+  shift?: ShiftDto | null;
+}
+
+export interface ShiftScheduleResponse {
+  from: string;
+  to: string;
+  items: ShiftScheduleItemDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+}

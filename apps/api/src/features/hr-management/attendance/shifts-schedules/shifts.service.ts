@@ -9,6 +9,8 @@ import type {
   ShiftDto,
   CreateShiftAssignmentInput,
   ShiftAssignmentDto,
+  ShiftScheduleQuery,
+  ShiftScheduleResponse,
 } from "./dto/shifts.dto.js";
 
 function parseTimeToMinutes(timeStr: string): number {
@@ -113,5 +115,12 @@ export class ShiftsService {
   ): Promise<ShiftAssignmentDto> {
     const tenantId = this.tenantContext.getTenantId();
     return this.repository.createAssignment(tenantId, shiftId, input);
+  }
+
+  async getSchedules(
+    query: ShiftScheduleQuery,
+  ): Promise<ShiftScheduleResponse> {
+    const tenantId = this.tenantContext.getTenantId();
+    return this.repository.getSchedules(tenantId, query);
   }
 }

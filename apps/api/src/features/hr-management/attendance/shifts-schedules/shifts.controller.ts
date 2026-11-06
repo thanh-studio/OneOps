@@ -17,10 +17,12 @@ import {
   shiftInputSchema,
   shiftUpdateSchema,
   createShiftAssignmentSchema,
+  shiftScheduleQuerySchema,
   type ShiftListQuery,
   type ShiftInput,
   type ShiftUpdateInput,
   type CreateShiftAssignmentInput,
+  type ShiftScheduleQuery,
 } from "./dto/shifts.dto.js";
 import { ShiftsService } from "./shifts.service.js";
 
@@ -31,6 +33,13 @@ export class ShiftsController {
   @Get()
   list(@Query(new SchemaPipe(shiftListQuerySchema)) query: ShiftListQuery) {
     return this.service.list(query);
+  }
+
+  @Get("schedules")
+  getSchedules(
+    @Query(new SchemaPipe(shiftScheduleQuerySchema)) query: ShiftScheduleQuery,
+  ) {
+    return this.service.getSchedules(query);
   }
 
   @Get(":id")

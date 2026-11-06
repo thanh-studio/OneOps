@@ -17,6 +17,8 @@ import type {
   ShiftListResponse,
   CreateShiftAssignmentInput,
   ShiftAssignmentDto,
+  ShiftScheduleQuery,
+  ShiftScheduleResponse,
 } from "./dto/shifts.dto.js";
 
 function parseTimeToDate(val: string): Date {
@@ -562,5 +564,65 @@ export class ShiftsRepository {
       }
       throw error;
     }
+  }
+
+  async getSchedules(
+    tenantId: string,
+    query: ShiftScheduleQuery,
+  ): Promise<ShiftScheduleResponse> {
+    const fromStr = query.from || query.startDate!;
+    const toStr = query.to || query.endDate!;
+    const effectiveAssigneeId = query.assigneeId || query.employeeId;
+
+    const fromDate = new Date(`${fromStr}T00:00:00.000Z`);
+    const toDate = new Date(`${toStr}T00:00:00.000Z`);
+
+    const where: Prisma.HrShiftScheduleWhereInput = {
+      tenantId,
+      startDate: { lte: toDate },
+      endDate: { gte: fromDate },
+      ...(effectiveAssigneeId ? { assigneeId: effectiveAssigneeId } : {}),
+      ...(query.shiftId ? { shiftId: query.shiftId } : {}),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.workMode ? { workMode: query.workMode } : {}),
+      ...(query.includeArchived ? {} : { archivedAt: null }),
+    };
+
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 100;
+    const skip = (page - 1) * pageSize;
+    const take = pageSize;
+
+    const [rows, total] = await this.db.$transaction(
+      async (tx) => {
+        const items = await this.scheduleTable(tx).findMany({
+          where,
+          include: { shift: true },
+          orderBy: [
+            { startDate: "asc" },
+            { startTime: "asc" },
+            { assigneeId: "asc" },
+            { id: "asc" },
+          ],
+          skip,
+          take,
+        });
+        const count = await this.scheduleTable(tx).count({ where });
+        return [items, count];
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+
+    return {
+      from: fromStr,
+      to: toStr,
+      items: rows.map((row) => ({
+        ...this.assignmentDto(row),
+        shift: row.shift ? this.dto(row.shift) : null,
+      })),
+      total,
+      page,
+      pageSize,
+    };
   }
 }
